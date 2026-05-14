@@ -127,9 +127,9 @@ if(!Element.prototype.closest){Element.prototype.closest=function(s){var el=this
 if(!Element.prototype.matches){Element.prototype.matches=Element.prototype.msMatchesSelector||Element.prototype.webkitMatchesSelector||function(s){var m=(this.document||this.ownerDocument).querySelectorAll(s),i=m.length;while(--i>=0&&m.item(i)!==this){}return i>-1;};}
 
 // Endpoint бота для приёма результатов AMPD. Пустая строка = кнопка
-// «Надіслати в @bot» НЕ показывается (graceful degradation, чтобы не
+// «Надіслати лікарю» НЕ показывается (graceful degradation, чтобы не
 // сломать UX когда бот недоступен или ещё не задеплоен).
-var AMPD_BOT_ENDPOINT="";
+var AMPD_BOT_ENDPOINT="https://worker-production-ede9.up.railway.app/ampd/submit";
 
 var ansL={},ansP={},TOTAL=300,curLang="uk",curPage=0,PAGE=20;
 

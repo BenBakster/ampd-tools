@@ -125,9 +125,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 if(!Element.prototype.closest){Element.prototype.closest=function(s){var el=this;do{if(el.matches?el.matches(s):el.msMatchesSelector(s))return el;el=el.parentElement||el.parentNode;}while(el!==null&&el.nodeType===1);return null;};}
 
 // Endpoint бота для приёма результатов AMPD. Пустая строка = кнопка
-// «Надіслати в @bot» НЕ показывается (graceful degradation, чтобы не
+// «Надіслати лікарю» НЕ показывается (graceful degradation, чтобы не
 // сломать UX когда бот недоступен или ещё не задеплоен).
-var AMPD_BOT_ENDPOINT="";
+var AMPD_BOT_ENDPOINT="https://worker-production-ede9.up.railway.app/ampd/submit";
 
 var ansL={},ansP={},TOTAL=300,curLang="uk";
 
