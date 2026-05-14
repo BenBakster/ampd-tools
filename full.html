@@ -70,14 +70,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 .fac-val{min-width:34px;text-align:right;font-weight:700;font-family:monospace;font-size:13px}
 .dom-avg{margin-top:6px;padding:6px 12px;border-radius:6px;font-size:13px;font-weight:600;display:flex;justify-content:space-between}
 .interp{background:#fff;border:1px solid #ddd;border-radius:8px;padding:14px;margin:16px 0;font-size:12px;line-height:1.6;color:#555}
-.btns{text-align:center;padding:16px 0}
-.btns button{padding:12px 24px;font-size:14px;font-weight:600;border-radius:8px;cursor:pointer;margin:4px;border:2px solid #333}
+.btns{display:-webkit-flex;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:16px 8px}
+.btns button{padding:12px 24px;font-size:14px;font-weight:600;border-radius:8px;cursor:pointer;border:2px solid #333}
+.btns button:disabled{opacity:.5;cursor:wait}
 .btn-rst{background:#fff;color:#333}
 .btn-prt{background:#333;color:#fff}
 @media(max-width:420px){.opts label{width:calc(50% - 3px);font-size:11px;padding:9px 6px}}
 @media(max-width:340px){.opts label{width:100%}}
 .btn-cpy,.btn-lnk{background:#fff;color:#333}
 .btn-cpy.ok,.btn-lnk.ok{background:#27ae60;color:#fff;border-color:#27ae60}
+.btn-bot{background:#2aabee;color:#fff;border-color:#2aabee}
+.btn-bot.ok{background:#27ae60;color:#fff;border-color:#27ae60}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,.2)}
 .toast.show{opacity:1}
 @media print{.prog,.btns,.lang-toggle,.toast{display:none!important}body{background:#fff;padding:0}}
@@ -120,6 +123,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 <script>
 // Polyfill for Element.closest (Telegram WebView, old iOS)
 if(!Element.prototype.closest){Element.prototype.closest=function(s){var el=this;do{if(el.matches?el.matches(s):el.msMatchesSelector(s))return el;el=el.parentElement||el.parentNode;}while(el!==null&&el.nodeType===1);return null;};}
+
+// Endpoint бота для приёма результатов AMPD. Пустая строка = кнопка
+// «Надіслати в @bot» НЕ показывается (graceful degradation, чтобы не
+// сломать UX когда бот недоступен или ещё не задеплоен).
+var AMPD_BOT_ENDPOINT="";
 
 var ansL={},ansP={},TOTAL=300,curLang="uk";
 
@@ -751,7 +759,9 @@ var UI={
     p2instr:"\u0426\u0435 \u043f\u0435\u0440\u0435\u043b\u0456\u043a \u0442\u0432\u0435\u0440\u0434\u0436\u0435\u043d\u044c, \u044f\u043a\u0456 \u0440\u0456\u0437\u043d\u0456 \u043b\u044e\u0434\u0438 \u043c\u043e\u0436\u0443\u0442\u044c \u0441\u043a\u0430\u0437\u0430\u0442\u0438 \u043f\u0440\u043e \u0441\u0435\u0431\u0435. \u00ab\u041f\u0440\u0430\u0432\u0438\u043b\u044c\u043d\u0438\u0445\u00bb \u0447\u0438 \u00ab\u043d\u0435\u043f\u0440\u0430\u0432\u0438\u043b\u044c\u043d\u0438\u0445\u00bb \u0432\u0456\u0434\u043f\u043e\u0432\u0456\u0434\u0435\u0439 \u043d\u0435\u043c\u0430\u0454. \u041e\u0431\u0435\u0440\u0456\u0442\u044c \u0432\u0456\u0434\u043f\u043e\u0432\u0456\u0434\u044c, \u044f\u043a\u0430 \u043d\u0430\u0439\u043a\u0440\u0430\u0449\u0435 \u0432\u0430\u0441 \u043e\u043f\u0438\u0441\u0443\u0454.",
     skip:"\u2193 \u041f\u0440\u043e\u043f\u0443\u0449\u0435\u043d\u0456",result:"\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442",clear:"\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u0438 \u043f\u0440\u043e\u0433\u0440\u0435\u0441",
     lOpts:["\u0417\u043e\u0432\u0441\u0456\u043c \u043d\u0435 \u0432\u0456\u0440\u043d\u043e","\u0422\u0440\u043e\u0445\u0438 \u0432\u0456\u0440\u043d\u043e","\u041f\u0435\u0440\u0435\u0432\u0430\u0436\u043d\u043e \u0432\u0456\u0440\u043d\u043e","\u0426\u0456\u043b\u043a\u043e\u043c \u0432\u0456\u0440\u043d\u043e"],
-    pOpts:["Зовсім ні","Скоріше ні","Скоріше так","Повністю так"]
+    pOpts:["Зовсім ні","Скоріше ні","Скоріше так","Повністю так"],
+    sendBot:"Надіслати лікарю",sending:"Відправляю…",openingTg:"Відкриваю Telegram…",
+    endpointMissing:"Endpoint не налаштовано",encodeErr:"Помилка кодування",errPrefix:"Помилка: "
   },
   ru:{
     title:"AMPD \u2014 \u041a\u043e\u043c\u043f\u043b\u0435\u043a\u0441\u043d\u0430\u044f \u043e\u0446\u0435\u043d\u043a\u0430",
@@ -767,7 +777,9 @@ var UI={
     p2instr:"\u042d\u0442\u043e \u043f\u0435\u0440\u0435\u0447\u0435\u043d\u044c \u0443\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0439, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u0440\u0430\u0437\u043d\u044b\u0435 \u043b\u044e\u0434\u0438 \u043c\u043e\u0433\u0443\u0442 \u0441\u043a\u0430\u0437\u0430\u0442\u044c \u043e \u0441\u0435\u0431\u0435. \u00ab\u041f\u0440\u0430\u0432\u0438\u043b\u044c\u043d\u044b\u0445\u00bb \u0438\u043b\u0438 \u00ab\u043d\u0435\u043f\u0440\u0430\u0432\u0438\u043b\u044c\u043d\u044b\u0445\u00bb \u043e\u0442\u0432\u0435\u0442\u043e\u0432 \u043d\u0435\u0442. \u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043e\u0442\u0432\u0435\u0442, \u043a\u043e\u0442\u043e\u0440\u044b\u0439 \u043b\u0443\u0447\u0448\u0435 \u0432\u0441\u0435\u0433\u043e \u0432\u0430\u0441 \u043e\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442.",
     skip:"\u2193 \u041f\u0440\u043e\u043f\u0443\u0449\u0435\u043d\u043d\u044b\u0435",result:"\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442",clear:"\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u043f\u0440\u043e\u0433\u0440\u0435\u0441\u0441",
     lOpts:["\u0421\u043e\u0432\u0441\u0435\u043c \u043d\u0435 \u0432\u0435\u0440\u043d\u043e","\u0421\u043b\u0435\u0433\u043a\u0430 \u0432\u0435\u0440\u043d\u043e","\u0412 \u043e\u0441\u043d\u043e\u0432\u043d\u043e\u043c \u0432\u0435\u0440\u043d\u043e","\u041f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0432\u0435\u0440\u043d\u043e"],
-    pOpts:["Точно нет","Скорее нет","Скорее да","Точно да"]
+    pOpts:["Точно нет","Скорее нет","Скорее да","Точно да"],
+    sendBot:"Отправить врачу",sending:"Отправляю…",openingTg:"Открываю Telegram…",
+    endpointMissing:"Endpoint не настроен",encodeErr:"Ошибка кодирования",errPrefix:"Ошибка: "
   }
 };
 
@@ -947,6 +959,29 @@ function copyLink(){
   var base=location.href.split("#")[0];var url=base+"#r="+enc;
   copyText(url,function(){showToast("Посилання скопійовано");var b=document.getElementById("btnLnk");if(b){b.className="btn-lnk ok";setTimeout(function(){b.className="btn-lnk";},1500);}});
 }
+function sendToBot(){
+  var lb=UI[curLang];
+  if(!AMPD_BOT_ENDPOINT){showToast(lb.endpointMissing);return;}
+  var enc=packResult();if(!enc){showToast(lb.encodeErr);return;}
+  var nm=(document.getElementById("pid")||{value:""}).value||null;
+  var rpt=buildTextReport()||null;
+  var btn=document.getElementById("btnBot");if(btn)btn.disabled=true;
+  showToast(lb.sending);
+  fetch(AMPD_BOT_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload:enc,name:nm,report_text:rpt})})
+    .then(function(resp){
+      if(!resp.ok){return resp.json().then(function(e){throw new Error(e.error||resp.status);},function(){throw new Error(String(resp.status));});}
+      return resp.json();
+    })
+    .then(function(d){
+      showToast(lb.openingTg);
+      if(btn){btn.className="btn-bot ok";}
+      window.location.href=d.deep_link;
+    })
+    .catch(function(e){
+      showToast(lb.errPrefix+(e.message||"connection"));
+      if(btn)btn.disabled=false;
+    });
+}
 
 function calc(){
   var LI=[{id:1,s:"SD",w:-0.5},{id:2,s:"E",w:2.5},{id:3,s:"IN",w:2.5},{id:4,s:"I",w:-0.5},{id:5,s:"IN",w:2.5},{id:6,s:"IN",w:0.5},{id:7,s:"I",w:2.5},{id:8,s:"I",w:1.5},{id:9,s:"IN",w:3.5},{id:10,s:"IN",w:3.5},{id:11,s:"E",w:-0.5},{id:12,s:"IN",w:1.5},{id:13,s:"IN",w:1.5},{id:14,s:"SD",w:-0.5},{id:15,s:"I",w:3.5},{id:16,s:"SD",w:3.5},{id:17,s:"E",w:2.5},{id:18,s:"E",w:2.5},{id:19,s:"IN",w:3.5},{id:20,s:"E",w:1.5},{id:21,s:"E",w:3.5},{id:22,s:"SD",w:3.5},{id:23,s:"I",w:1.5},{id:24,s:"SD",w:2.5},{id:25,s:"SD",w:2.5},{id:26,s:"IN",w:-0.5},{id:27,s:"IN",w:1.5},{id:28,s:"SD",w:0.5},{id:29,s:"SD",w:0.5},{id:30,s:"SD",w:3.5},{id:31,s:"E",w:1.5},{id:32,s:"E",w:3.5},{id:33,s:"I",w:2.5},{id:34,s:"SD",w:0.5},{id:35,s:"I",w:2.5},{id:36,s:"SD",w:1.5},{id:37,s:"IN",w:-0.5},{id:38,s:"E",w:1.5},{id:39,s:"IN",w:-0.5},{id:40,s:"I",w:-0.5},{id:41,s:"SD",w:1.5},{id:42,s:"SD",w:2.5},{id:43,s:"IN",w:3.5},{id:44,s:"E",w:-0.5},{id:45,s:"IN",w:2.5},{id:46,s:"IN",w:2.5},{id:47,s:"I",w:3.5},{id:48,s:"I",w:0.5},{id:49,s:"E",w:3.5},{id:50,s:"I",w:1.5},{id:51,s:"SD",w:-0.5},{id:52,s:"IN",w:0.5},{id:53,s:"SD",w:2.5},{id:54,s:"E",w:2.5},{id:55,s:"I",w:2.5},{id:56,s:"I",w:2.5},{id:57,s:"I",w:3.5},{id:58,s:"SD",w:3.5},{id:59,s:"SD",w:3.5},{id:60,s:"E",w:0.5},{id:61,s:"E",w:-0.5},{id:62,s:"I",w:3.5},{id:63,s:"IN",w:3.5},{id:64,s:"SD",w:0.5},{id:65,s:"I",w:0.5},{id:66,s:"I",w:2.5},{id:67,s:"IN",w:0.5},{id:68,s:"E",w:0.5},{id:69,s:"IN",w:3.5},{id:70,s:"SD",w:1.5},{id:71,s:"I",w:3.5},{id:72,s:"I",w:2.5},{id:73,s:"IN",w:2.5},{id:74,s:"I",w:0.5},{id:75,s:"E",w:0.5},{id:76,s:"I",w:-0.5},{id:77,s:"I",w:1.5},{id:78,s:"SD",w:1.5},{id:79,s:"I",w:1.5},{id:80,s:"SD",w:0.5}];
@@ -1004,13 +1039,14 @@ function calc(){
   for(var __dk in DOM){var __d={name:__dk,mean:pDS[__dk],facets:[]};for(var __fi=0;__fi<DOM[__dk].f.length;__fi++){var __fn=DOM[__dk].f[__fi];__d.facets.push({name:__fn,mean:pFS[__fn]});}__report.domains.push(__d);}
   var __cn2={};for(var __dk in DOM)for(var __fi=0;__fi<DOM[__dk].f.length;__fi++)__cn2[DOM[__dk].f[__fi]]=1;
   for(var __fn in FAC){if(!__cn2[__fn]){if(pFS[__fn]>=1.5)__report.extraElevated.push({name:__fn,mean:pFS[__fn]});}}
-  h+='<div class="btns"><button class="btn-rst" id="btnRst">\u0417\u043d\u043e\u0432\u0443</button> <button class="btn-prt" id="btnPrt">PDF</button> <button class="btn-cpy" id="btnCpy">\u041a\u043e\u043f\u0456\u044e\u0432\u0430\u0442\u0438 \u0437\u0432\u0456\u0442</button> <button class="btn-lnk" id="btnLnk">\u041f\u043e\u0441\u0438\u043b\u0430\u043d\u043d\u044f</button></div>';
+  h+='<div class="btns"><button class="btn-rst" id="btnRst">\u0417\u043d\u043e\u0432\u0443</button> <button class="btn-prt" id="btnPrt">PDF</button> <button class="btn-cpy" id="btnCpy">\u041a\u043e\u043f\u0456\u044e\u0432\u0430\u0442\u0438 \u0437\u0432\u0456\u0442</button> <button class="btn-lnk" id="btnLnk">\u041f\u043e\u0441\u0438\u043b\u0430\u043d\u043d\u044f</button>'+(AMPD_BOT_ENDPOINT?' <button class="btn-bot" id="btnBot">'+esc(UI[curLang].sendBot)+'</button>':'')+'</div>';
   if(!window.__viewMode){try{localStorage.removeItem("ampd_ansL");localStorage.removeItem("ampd_ansP");localStorage.removeItem("ampd_pid");}catch(ex){}}
   document.getElementById("form").style.display="none";var re=document.getElementById("res");re.innerHTML=h;re.className="res show";window.scrollTo(0,0);
   var bR=document.getElementById("btnRst");if(bR)bR.addEventListener("click",function(){try{localStorage.removeItem("ampd_ansL");localStorage.removeItem("ampd_ansP");localStorage.removeItem("ampd_pid");}catch(ex){}location.hash="";location.reload();},false);
   var bP=document.getElementById("btnPrt");if(bP)bP.addEventListener("click",function(){window.print();},false);
   var bC=document.getElementById("btnCpy");if(bC)bC.addEventListener("click",copyReport,false);
   var bL=document.getElementById("btnLnk");if(bL)bL.addEventListener("click",copyLink,false);
+  var bB=document.getElementById("btnBot");if(bB)bB.addEventListener("click",sendToBot,false);
 }
 
 // Helper: find parent matching selector (polyfill-safe)
