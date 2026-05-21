@@ -959,6 +959,49 @@ function buildTextReport(){
   out+=nl+"— ampd-tools";
   return out;
 }
+// Емодзі-світлофор. PID-5: T<65 норма, 65-69 погранично, 70-74 значне, ≥75 виражене.
+// LPFS: маємо текстову severity з sv() — мапимо в той самий 4-рівневий emoji.
+function buildCompactReport(){
+  if(!__report)return"";
+  var r=__report,nl="\n",out="";
+  function emoT(t){return t>=75?"🔴":t>=70?"🟠":t>=65?"🟡":"🟢";}
+  function emoL(sev){
+    if(sev.indexOf("Виражен")>=0)return"🔴";
+    if(sev.indexOf("Клінічно")>=0)return"🟠";
+    if(sev.indexOf("Субклінічн")>=0)return"🟡";
+    return"🟢";
+  }
+  out+="🧪 AMPD"+nl;
+  if(r.name)out+="👤 "+r.name+" (зі слів пацієнта)"+nl;
+  out+="📅 "+r.date+nl;
+  out+="🔎 VRIN="+r.vrin+" | ORS="+r.ors+" | PRD="+r.prd;
+  if(r.validityWarn)out+=" ⚠ "+r.validityWarn;
+  out+=nl+nl+"🧩 LPFS (Критерій A):"+nl;
+  for(var i=0;i<r.lpfs.length;i++){var x=r.lpfs[i];out+=emoL(x.sev)+" "+x.name+" — "+x.score.toFixed(1)+nl;}
+  out+=nl+"🧬 PID-5 (Критерій B):"+nl;
+  for(var i=0;i<r.domains.length;i++){var d=r.domains[i];out+=emoT(d.T)+" "+d.name+" T="+d.T+nl;}
+  var elev=[];
+  for(var i=0;i<r.domains.length;i++){var d=r.domains[i];for(var j=0;j<d.facets.length;j++){var f=d.facets[j];if(f.T>=65)elev.push({name:f.name,T:f.T});}}
+  for(var i=0;i<r.extraElevated.length;i++)elev.push({name:r.extraElevated[i].name,T:r.extraElevated[i].T});
+  elev.sort(function(a,b){return b.T-a.T;});
+  out+=nl+"Підвищені фасети (T≥65):"+nl;
+  if(!elev.length)out+="🟢 всі шкали в нормі"+nl;
+  else for(var i=0;i<elev.length;i++)out+=emoT(elev[i].T)+" "+elev[i].name+" T="+elev[i].T+nl;
+  return out;
+}
+// Повний HTML-репорт з inline CSS — рендериться в браузері 1:1 як на сайті.
+function buildHtmlReport(){
+  if(!__report)return"";
+  var re=document.getElementById("res");if(!re)return"";
+  var clone=re.cloneNode(true);
+  var btns=clone.querySelector(".btns");if(btns)btns.parentNode.removeChild(btns);
+  clone.removeAttribute("id");
+  var styles="";var styleEls=document.getElementsByTagName("style");
+  for(var i=0;i<styleEls.length;i++)styles+=styleEls[i].textContent;
+  var nm=(__report.name||"").replace(/[<>&"]/g,function(c){return"&#"+c.charCodeAt(0)+";";});
+  var titleNm=nm||"патієнт";
+  return '<!DOCTYPE html><html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AMPD — '+titleNm+'</title><style>'+styles+'body{padding:16px;background:#fff;padding-bottom:24px}.res{display:block!important;padding:0}</style></head><body>'+clone.outerHTML+'</body></html>';
+}
 function copyReport(){copyText(buildTextReport(),function(){showToast("Звіт скопійовано");var b=document.getElementById("btnCpy");if(b){b.className="btn-cpy ok";setTimeout(function(){b.className="btn-cpy";},1500);}});}
 function copyLink(){
   var enc=packResult();if(!enc){showToast("Помилка кодування");return;}
@@ -970,10 +1013,11 @@ function sendToBot(){
   if(!AMPD_BOT_ENDPOINT){showToast(lb.endpointMissing);return;}
   var enc=packResult();if(!enc){showToast(lb.encodeErr);return;}
   var nm=(document.getElementById("pid")||{value:""}).value||null;
-  var rpt=buildTextReport()||null;
+  var rpt=buildCompactReport()||buildTextReport()||null;
+  var rptHtml=buildHtmlReport()||null;
   var btn=document.getElementById("btnBot");if(btn)btn.disabled=true;
   showToast(lb.sending);
-  fetch(AMPD_BOT_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload:enc,name:nm,report_text:rpt})})
+  fetch(AMPD_BOT_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({payload:enc,name:nm,report_text:rpt,report_html:rptHtml})})
     .then(function(resp){
       if(!resp.ok){return resp.json().then(function(e){throw new Error(e.error||resp.status);},function(){throw new Error(String(resp.status));});}
       return resp.json();
