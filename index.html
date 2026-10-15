@@ -950,7 +950,7 @@ setInterval(function(){
   }catch(e){}
 },60000);
 function clearAll(){
-  ansL={};ansP={};curPage=0;
+  ansL={};ansP={};__resultIdentity=null;curPage=0;
   _draftStartedAt=null;
   _wipeAmpdStorage();
   document.getElementById("pid").value="";
@@ -984,22 +984,41 @@ function esc(s){var d=document.createElement("div");d.textContent=s;return d.inn
 
 var __report=null;
 function packResult(){
-  var L="";for(var i=1;i<=80;i++)L+=(ansL[i]!==undefined?ansL[i]:"-");
-  var P="";for(var i=0;i<=219;i++)P+=(ansP[i]!==undefined?ansP[i]:"-");
+  var L="";for(var i=1;i<=80;i++)L+=(Number.isInteger(ansL[i])&&ansL[i]>=1&&ansL[i]<=4?ansL[i]:"-");
+  var P="";for(var i=0;i<=219;i++)P+=(Number.isInteger(ansP[i])&&ansP[i]>=0&&ansP[i]<=3?ansP[i]:"-");
   var nm=(document.getElementById("pid")||{value:""}).value||"";
-  var ts=new Date().toISOString().slice(0,10);
+  var ts=resultIdentity().ts;
   var s="v1|"+curLang+"|"+ts+"|"+nm+"|"+L+"|"+P;
   try{return btoa(unescape(encodeURIComponent(s)));}catch(e){return"";}
 }
 function unpackResult(b){
   try{
-    var s=decodeURIComponent(escape(atob(b)));
-    var p=s.split("|");if(p[0]!=="v1")return null;
-    var L=p[4]||"",P=p[5]||"",aL={},aP={};
-    for(var i=0;i<L.length;i++){if(L.charAt(i)!=="-")aL[i+1]=parseInt(L.charAt(i),10);}
-    for(var i=0;i<P.length;i++){if(P.charAt(i)!=="-")aP[i]=parseInt(P.charAt(i),10);}
-    return{lang:p[1]||"uk",ts:p[2]||"",name:p[3]||"",ansL:aL,ansP:aP};
+    var s=decodeURIComponent(escape(atob(decodeURIComponent(b).replace(/-/g,"+").replace(/_/g,"/"))));
+    var p=s.split("|");
+    if(p.length<6||p[0]!=="v1"||!["uk","ru"].includes(p[1]))return null;
+    var P=p.pop(),L=p.pop(),aL={},aP={};
+    if(!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z)?$/.test(p[2])||!Number.isFinite(Date.parse(p[2])))return null;
+    if(!/^[1-4-]{80}$/.test(L)||!/^[0-3-]{220}$/.test(P))return null;
+    for(var i=0;i<80;i++)if(L[i]!=="-")aL[i+1]=Number(L[i]);
+    for(var i=0;i<220;i++)if(P[i]!=="-")aP[i]=Number(P[i]);
+    return{lang:p[1],ts:p[2]||"",name:p.slice(3).join("|"),ansL:aL,ansP:aP};
   }catch(e){return null;}
+}
+function createResultPayload(){
+  var scores=calculateAMPD(ansL,ansP),cleanL={},cleanP={};
+  for(var i=1;i<=80;i++)if(Number.isInteger(ansL[i])&&ansL[i]>=1&&ansL[i]<=4)cleanL[i]=ansL[i];
+  for(var i=0;i<220;i++)if(Number.isInteger(ansP[i])&&ansP[i]>=0&&ansP[i]<=3)cleanP[i]=ansP[i];
+  return {v:1,t:"ampd",lang:curLang,ts:resultIdentity().ts,completedAt:resultIdentity().ts,assessmentId:resultIdentity().id,
+    name:(document.getElementById("pid")||{value:""}).value||"",
+    ansL:cleanL,ansP:cleanP,passport:scores.passport,
+    fT:scores.fT,dT:scores.dT,pFS:scores.pFS,pDS:scores.pDS,lSc:scores.lSc,bfM:scores.bfM,
+    validity:{vrin:scores.vrinScore,ors:scores.orsScore,prd:scores.prdScore},
+    safety:{items:[80,118,177].filter(function(id){return cleanP[id]>=2;}).map(function(id){return id+1;}),threshold:2}};
+}
+function exportJSON(){
+  var data=createResultPayload(),url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json;charset=utf-8"}));
+  var a=document.createElement("a");a.href=url;a.download="ampd-"+data.ts.slice(0,10)+".json";
+  document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(url);},1000);
 }
 function showToast(msg){
   var t=document.getElementById("toast");if(!t)return;
@@ -1022,16 +1041,19 @@ function buildTextReport(){
   var r=__report,nl="\n",out="AMPD — Результати"+nl;
   if(r.name)out+="Ім'я: "+r.name+nl;
   out+="Дата: "+r.date+nl+nl;
-  out+="Валідність: VRIN="+r.vrin+" | ORS="+r.ors+" | PRD="+r.prd;
+  out+="Валідність: VRIN="+scoreText(r.vrin)+" | ORS="+scoreText(r.ors)+" | PRD="+scoreText(r.prd);
   if(r.validityWarn)out+=" ⚠ "+r.validityWarn;
   out+=nl+nl+"Критерій A — LPFS-SR:"+nl;
-  for(var i=0;i<r.lpfs.length;i++){var x=r.lpfs[i];out+="  "+x.name+": "+x.score.toFixed(1)+" — "+x.sev+nl;}
+  for(var i=0;i<r.lpfs.length;i++){var x=r.lpfs[i];out+="  "+x.name+": "+(x.score===null?"NA":x.score.toFixed(1))+" — "+x.sev+nl;}
   out+=nl+"Критерій B — PID-5 (T-бали):"+nl;
   for(var i=0;i<r.domains.length;i++){
-    var d=r.domains[i];out+="  "+d.name+": T="+d.T+" ("+d.label+")"+nl;
-    for(var j=0;j<d.facets.length;j++){var f=d.facets[j];if(f.T>=65)out+="    • "+f.name+": T="+f.T+nl;}
+    var d=r.domains[i];out+="  "+d.name+": T="+scoreText(d.T)+" ("+d.label+")"+nl;
+    for(var j=0;j<d.facets.length;j++){var f=d.facets[j];if(f.T>=65||f.T===null)out+="    • "+f.name+": T="+scoreText(f.T)+nl;}
   }
-  if(r.extraElevated.length){out+=nl+"Додаткові фасети (T≥65):"+nl;for(var i=0;i<r.extraElevated.length;i++){var f=r.extraElevated[i];out+="  • "+f.name+": T="+f.T+nl;}}
+  if(r.extraElevated.length){out+=nl+"Додаткові фасети (T≥65):"+nl;for(var i=0;i<r.extraElevated.length;i++){var f=r.extraElevated[i];out+="  • "+f.name+": T="+scoreText(f.T)+nl;}}
+  var missing=[];for(var fn in r.fT)if(r.fT[fn]===null)missing.push(fn);
+  if(missing.length)out+=nl+"NA (недостатньо відповідей): "+missing.join(", ")+nl;
+  out+=bfMText(r.bfM)+nl+passportText(r.passport)+nl;
   out+=nl+"— ampd-tools";
   return out;
 }
@@ -1040,8 +1062,9 @@ function buildTextReport(){
 function buildCompactReport(){
   if(!__report)return"";
   var r=__report,nl="\n",out="";
-  function emoT(t){return t>=75?"🔴":t>=70?"🟠":t>=65?"🟡":"🟢";}
+  function emoT(t){return t===null?"⚪": t>=75?"🔴":t>=70?"🟠":t>=65?"🟡":"🟢";}
   function emoL(sev){
+    if(sev.indexOf("NA")===0)return"⚪";
     if(sev.indexOf("Виражен")>=0)return"🔴";
     if(sev.indexOf("Клінічно")>=0)return"🟠";
     if(sev.indexOf("Субклінічн")>=0)return"🟡";
@@ -1050,19 +1073,22 @@ function buildCompactReport(){
   out+="🧪 AMPD"+nl;
   if(r.name)out+="👤 "+r.name+" (зі слів пацієнта)"+nl;
   out+="📅 "+r.date+nl;
-  out+="🔎 VRIN="+r.vrin+" | ORS="+r.ors+" | PRD="+r.prd;
+  out+="🔎 VRIN="+scoreText(r.vrin)+" | ORS="+scoreText(r.ors)+" | PRD="+scoreText(r.prd);
   if(r.validityWarn)out+=" ⚠ "+r.validityWarn;
   out+=nl+nl+"🧩 LPFS (Критерій A):"+nl;
-  for(var i=0;i<r.lpfs.length;i++){var x=r.lpfs[i];out+=emoL(x.sev)+" "+x.name+" — "+x.score.toFixed(1)+nl;}
+  for(var i=0;i<r.lpfs.length;i++){var x=r.lpfs[i];out+=emoL(x.sev)+" "+x.name+" — "+(x.score===null?"NA":x.score.toFixed(1))+nl;}
   out+=nl+"🧬 PID-5 (Критерій B):"+nl;
-  for(var i=0;i<r.domains.length;i++){var d=r.domains[i];out+=emoT(d.T)+" "+d.name+" T="+d.T+nl;}
+  for(var i=0;i<r.domains.length;i++){var d=r.domains[i];out+=emoT(d.T)+" "+d.name+" T="+scoreText(d.T)+nl;}
   var elev=[];
   for(var i=0;i<r.domains.length;i++){var d=r.domains[i];for(var j=0;j<d.facets.length;j++){var f=d.facets[j];if(f.T>=65)elev.push({name:f.name,T:f.T});}}
   for(var i=0;i<r.extraElevated.length;i++)elev.push({name:r.extraElevated[i].name,T:r.extraElevated[i].T});
   elev.sort(function(a,b){return b.T-a.T;});
   out+=nl+"Підвищені фасети (T≥65):"+nl;
-  if(!elev.length)out+="🟢 всі шкали в нормі"+nl;
+  if(!elev.length)out+="Підвищених серед розрахованих фасет немає"+nl;
   else for(var i=0;i<elev.length;i++)out+=emoT(elev[i].T)+" "+elev[i].name+" T="+elev[i].T+nl;
+  var missing=[];for(var fn in r.fT)if(r.fT[fn]===null)missing.push(fn);
+  if(missing.length)out+=nl+"NA (недостатньо відповідей): "+missing.join(", ")+nl;
+  out+=bfMText(r.bfM)+nl+passportText(r.passport)+nl;
   return out;
 }
 // Повний HTML-репорт з inline CSS — рендериться в браузері 1:1 як на сайті.
@@ -1151,106 +1177,214 @@ function showSafetyModal(){
   m.className="safety-modal-overlay";
 }
 function hideSafetyModal(){var m=document.getElementById("safetyModal");if(m)m.className="safety-modal-overlay hidden";}
-function calc(){
+// BEGIN AMPD SCORING CORE
+var __resultIdentity=null;
+function resultIdentity(importedTimestamp){
+  var signature=JSON.stringify([ansL,ansP]);
+  if(!__resultIdentity||__resultIdentity.signature!==signature||importedTimestamp){
+    var ts=importedTimestamp||new Date().toISOString(),h=2166136261;
+    var input=ts+signature;for(var j=0;j<input.length;j++)h=Math.imul(h^input.charCodeAt(j),16777619);
+    __resultIdentity={signature:signature,ts:ts,id:"ampd-"+ts.replace(/[^0-9]/g,"")+"-"+(h>>>0).toString(16)};
+  }
+  return __resultIdentity;
+}
+// Keep identical in both standalone HTML files.
+function tsc(raw,n){return raw===null?null:Math.round(50+10*(raw-n.m)/n.sd);}
+function tcl(t){return t===null?"#888": t>=75?"#c0392b":t>=70?"#e67e22":t>=65?"#f39c12":"#27ae60";}
+function tlb(t){return t===null?"NA (недостатньо відповідей)": t>=75?"\u0412\u0438\u0440\u0430\u0436\u0435\u043d\u0435":t>=70?"\u0417\u043d\u0430\u0447\u043d\u0435":t>=65?"\u041f\u043e\u0433\u0440\u0430\u043d\u0438\u0447\u043d\u043e":"\u041d\u043e\u0440\u043c\u0430";}
+function scoreText(value){return value===null?"NA":String(value);}
+function meanText(value){return value===null?"NA":value.toFixed(2)+"/3";}
+function passportText(p){return "Форма: "+p.form+" | Норми: "+p.norms+" | scoringVersion: "+p.scoringVersion+" | missingRule: "+p.missingRule+" | respondentType: "+p.respondentType+" | normSample PID-5: N="+p.normSample.n+"; LPFS-SR: N=306"+" | missingCount: "+p.missingCount+" (LPFS="+p.missingCountByInstrument.lpfs+", PID-5="+p.missingCountByInstrument.pid5+")";}
+function bfMText(b){
+  var out="\n"+b.label+" ("+b.range+")\n";
+  if(b.keyNote)out+=b.keyNote+"\n";
+  for(var i=0;i<b.domains.length;i++){
+    var d=b.domains[i];out+=d.name+": "+meanText(d.mean)+"\n";
+    for(var j=0;j<d.facets.length;j++){var f=d.facets[j];out+="  "+f.name+": "+meanText(f.mean)+"\n";}
+  }
+  return out;
+}
+function calculateAMPD(ansL,ansP){
   var LI=[{id:1,s:"SD",w:-0.5},{id:2,s:"E",w:2.5},{id:3,s:"IN",w:2.5},{id:4,s:"I",w:-0.5},{id:5,s:"IN",w:2.5},{id:6,s:"IN",w:0.5},{id:7,s:"I",w:2.5},{id:8,s:"I",w:1.5},{id:9,s:"IN",w:3.5},{id:10,s:"IN",w:3.5},{id:11,s:"E",w:-0.5},{id:12,s:"IN",w:1.5},{id:13,s:"IN",w:1.5},{id:14,s:"SD",w:-0.5},{id:15,s:"I",w:3.5},{id:16,s:"SD",w:3.5},{id:17,s:"E",w:2.5},{id:18,s:"E",w:2.5},{id:19,s:"IN",w:3.5},{id:20,s:"E",w:1.5},{id:21,s:"E",w:3.5},{id:22,s:"SD",w:3.5},{id:23,s:"I",w:1.5},{id:24,s:"SD",w:2.5},{id:25,s:"SD",w:2.5},{id:26,s:"IN",w:-0.5},{id:27,s:"IN",w:1.5},{id:28,s:"SD",w:0.5},{id:29,s:"SD",w:0.5},{id:30,s:"SD",w:3.5},{id:31,s:"E",w:1.5},{id:32,s:"E",w:3.5},{id:33,s:"I",w:2.5},{id:34,s:"SD",w:0.5},{id:35,s:"I",w:2.5},{id:36,s:"SD",w:1.5},{id:37,s:"IN",w:-0.5},{id:38,s:"E",w:1.5},{id:39,s:"IN",w:-0.5},{id:40,s:"I",w:-0.5},{id:41,s:"SD",w:1.5},{id:42,s:"SD",w:2.5},{id:43,s:"IN",w:3.5},{id:44,s:"E",w:-0.5},{id:45,s:"IN",w:2.5},{id:46,s:"IN",w:2.5},{id:47,s:"I",w:3.5},{id:48,s:"I",w:0.5},{id:49,s:"E",w:3.5},{id:50,s:"I",w:1.5},{id:51,s:"SD",w:-0.5},{id:52,s:"IN",w:0.5},{id:53,s:"SD",w:2.5},{id:54,s:"E",w:2.5},{id:55,s:"I",w:2.5},{id:56,s:"I",w:2.5},{id:57,s:"I",w:3.5},{id:58,s:"SD",w:3.5},{id:59,s:"SD",w:3.5},{id:60,s:"E",w:0.5},{id:61,s:"E",w:-0.5},{id:62,s:"I",w:3.5},{id:63,s:"IN",w:3.5},{id:64,s:"SD",w:0.5},{id:65,s:"I",w:0.5},{id:66,s:"I",w:2.5},{id:67,s:"IN",w:0.5},{id:68,s:"E",w:0.5},{id:69,s:"IN",w:3.5},{id:70,s:"SD",w:1.5},{id:71,s:"I",w:3.5},{id:72,s:"I",w:2.5},{id:73,s:"IN",w:2.5},{id:74,s:"I",w:0.5},{id:75,s:"E",w:0.5},{id:76,s:"I",w:-0.5},{id:77,s:"I",w:1.5},{id:78,s:"SD",w:1.5},{id:79,s:"I",w:1.5},{id:80,s:"SD",w:0.5}];
   var SM={I:"Identity",SD:"Self-Direction",E:"Empathy",IN:"Intimacy"};
   var lS={Identity:0,"Self-Direction":0,Empathy:0,Intimacy:0};
-  for(var i=0;i<LI.length;i++){var it=LI[i];lS[SM[it.s]]+=(ansL[it.id]||0)*it.w;}
-  var lT=0;for(var k in lS)lT+=lS[k];
+  // LPFS: complete weighted components only; no published prorating rule is assumed.
+  for(var i=0;i<LI.length;i++){
+    var it=LI[i],key=SM[it.s],v=ansL[it.id];
+    if(!Number.isInteger(v)||v<1||v>4)lS[key]=null;
+    else if(lS[key]!==null)lS[key]+=v*it.w;
+  }
+  var lT=Object.values(lS).some(function(v){return v===null;})?null:Object.values(lS).reduce(function(a,b){return a+b;},0);
   var lSc={Identity:lS.Identity,"Self-Direction":lS["Self-Direction"],Empathy:lS.Empathy,Intimacy:lS.Intimacy,Total:lT};
 
   var REV={6:1,29:1,34:1,57:1,86:1,89:1,95:1,96:1,97:1,130:1,141:1,154:1,163:1,176:1,209:1,214:1};
   var FAC={"\u0410\u043d\u0433\u0435\u0434\u043e\u043d\u0456\u044f":[0,22,25,29,123,154,156,188],"\u0422\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c":[78,92,94,95,108,109,129,140,173],"\u041f\u043e\u0448\u0443\u043a \u0443\u0432\u0430\u0433\u0438":[13,42,73,110,112,172,190,210],"\u0411\u0435\u0437\u0441\u0435\u0440\u0434\u0435\u0447\u043d\u0456\u0441\u0442\u044c":[10,12,18,53,71,72,89,152,165,182,197,199,206,207],"\u041e\u0431\u043c\u0430\u043d\u043d\u0456\u0441\u0442\u044c":[40,52,55,75,125,133,141,205,213,217],"\u0414\u0435\u043f\u0440\u0435\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044c":[26,60,65,80,85,103,118,147,150,162,167,168,177,211],"\u0412\u0456\u0434\u0432\u043e\u043b\u0456\u043a\u0443\u0432\u0430\u043d\u0456\u0441\u0442\u044c":[5,28,46,67,87,117,131,143,198],"\u0415\u043a\u0441\u0446\u0435\u043d\u0442\u0440\u0438\u0447\u043d\u0456\u0441\u0442\u044c":[4,20,23,24,32,51,54,69,70,151,171,184,204],"\u0415\u043c\u043e\u0446\u0456\u0439\u043d\u0430 \u043b\u0430\u0431\u0456\u043b\u044c\u043d\u0456\u0441\u0442\u044c":[17,61,101,121,137,164,180],"\u0413\u0440\u0430\u043d\u0434\u0456\u043e\u0437\u043d\u0456\u0441\u0442\u044c":[39,64,113,178,186,196],"\u0412\u043e\u0440\u043e\u0436\u0456\u0441\u0442\u044c":[27,31,37,84,91,115,157,169,187,215],"\u0406\u043c\u043f\u0443\u043b\u044c\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044c":[3,15,16,21,57,203],"\u0423\u043d\u0438\u043a\u0430\u043d\u043d\u044f \u0431\u043b\u0438\u0437\u044c\u043a\u043e\u0441\u0442\u0456":[88,96,107,119,144,202],"\u0411\u0435\u0437\u0432\u0456\u0434\u043f\u043e\u0432\u0456\u0434\u0430\u043b\u044c\u043d\u0456\u0441\u0442\u044c":[30,128,155,159,170,200,209],"\u041c\u0430\u043d\u0456\u043f\u0443\u043b\u044f\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":[106,124,161,179,218],"\u041f\u0435\u0440\u0446\u0435\u043f\u0442\u0438\u0432\u043d\u0430 \u0434\u0438\u0437\u0440\u0435\u0433\u0443\u043b\u044f\u0446\u0456\u044f":[35,36,41,43,58,76,82,153,191,192,212,216],"\u041f\u0435\u0440\u0441\u0435\u0432\u0435\u0440\u0430\u0446\u0456\u044f":[45,50,59,77,79,99,120,127,136],"\u041e\u0431\u043c\u0435\u0436\u0435\u043d\u0430 \u0430\u0444\u0435\u043a\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":[7,44,83,90,100,166,183],"\u0420\u0438\u0433\u0456\u0434\u043d\u0438\u0439 \u043f\u0435\u0440\u0444\u0435\u043a\u0446\u0456\u043e\u043d\u0456\u0437\u043c":[33,48,104,114,122,134,139,175,195,219],"\u0421\u0445\u0438\u043b\u044c\u043d\u0456\u0441\u0442\u044c \u0434\u043e \u0440\u0438\u0437\u0438\u043a\u0443":[2,6,34,38,47,66,68,86,97,111,158,163,194,214],"\u0421\u0435\u043f\u0430\u0440\u0430\u0446\u0456\u0439\u043d\u0430 \u0442\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c":[11,49,56,63,126,148,174],"\u041f\u0456\u0434\u043a\u043e\u0440\u044e\u0432\u0430\u043d\u0456\u0441\u0442\u044c":[8,14,62,201],"\u041f\u0456\u0434\u043e\u0437\u0440\u0456\u043b\u0456\u0441\u0442\u044c":[1,102,116,130,132,176,189],"\u041d\u0435\u0437\u0432\u0438\u0447\u043d\u0456 \u043f\u0435\u0440\u0435\u043a\u043e\u043d\u0430\u043d\u043d\u044f":[93,98,105,138,142,149,193,208],"\u0412\u0456\u0434\u0441\u0442\u043e\u0440\u043e\u043d\u0435\u043d\u0456\u0441\u0442\u044c":[9,19,74,81,135,145,146,160,181,185]};
   var DOM={"\u041d\u0435\u0433\u0430\u0442\u0438\u0432\u043d\u0430 \u0430\u0444\u0435\u043a\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{f:["\u0415\u043c\u043e\u0446\u0456\u0439\u043d\u0430 \u043b\u0430\u0431\u0456\u043b\u044c\u043d\u0456\u0441\u0442\u044c","\u0422\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c","\u0421\u0435\u043f\u0430\u0440\u0430\u0446\u0456\u0439\u043d\u0430 \u0442\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c"],c:"#e74c3c",bg:"#fdedec"},"\u0412\u0456\u0434\u0441\u0442\u043e\u0440\u043e\u043d\u0435\u043d\u0456\u0441\u0442\u044c":{f:["\u0412\u0456\u0434\u0441\u0442\u043e\u0440\u043e\u043d\u0435\u043d\u0456\u0441\u0442\u044c","\u0410\u043d\u0433\u0435\u0434\u043e\u043d\u0456\u044f","\u0423\u043d\u0438\u043a\u0430\u043d\u043d\u044f \u0431\u043b\u0438\u0437\u044c\u043a\u043e\u0441\u0442\u0456"],c:"#3498db",bg:"#ebf5fb"},"\u0410\u043d\u0442\u0430\u0433\u043e\u043d\u0456\u0437\u043c":{f:["\u041c\u0430\u043d\u0456\u043f\u0443\u043b\u044f\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c","\u041e\u0431\u043c\u0430\u043d\u043d\u0456\u0441\u0442\u044c","\u0413\u0440\u0430\u043d\u0434\u0456\u043e\u0437\u043d\u0456\u0441\u0442\u044c"],c:"#e67e22",bg:"#fef5e7"},"\u0420\u043e\u0437\u0433\u0430\u043b\u044c\u043c\u043e\u0432\u0430\u043d\u0456\u0441\u0442\u044c":{f:["\u0411\u0435\u0437\u0432\u0456\u0434\u043f\u043e\u0432\u0456\u0434\u0430\u043b\u044c\u043d\u0456\u0441\u0442\u044c","\u0406\u043c\u043f\u0443\u043b\u044c\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044c","\u0412\u0456\u0434\u0432\u043e\u043b\u0456\u043a\u0443\u0432\u0430\u043d\u0456\u0441\u0442\u044c"],c:"#9b59b6",bg:"#f4ecf7"},"\u041f\u0441\u0438\u0445\u043e\u0442\u0438\u0437\u043c":{f:["\u041d\u0435\u0437\u0432\u0438\u0447\u043d\u0456 \u043f\u0435\u0440\u0435\u043a\u043e\u043d\u0430\u043d\u043d\u044f","\u0415\u043a\u0441\u0446\u0435\u043d\u0442\u0440\u0438\u0447\u043d\u0456\u0441\u0442\u044c","\u041f\u0435\u0440\u0446\u0435\u043f\u0442\u0438\u0432\u043d\u0430 \u0434\u0438\u0437\u0440\u0435\u0433\u0443\u043b\u044f\u0446\u0456\u044f"],c:"#1abc9c",bg:"#e8f8f5"}};
 
-  var pFS={};
-  for(var f in FAC){var items=FAC[f];var sum=0;for(var i=0;i<items.length;i++){var raw=ansP[items[i]]||0;if(REV[items[i]])raw=3-raw;sum+=raw;}pFS[f]=sum/items.length;}
-  var pDS={};for(var domKey in DOM){var fs=DOM[domKey].f;var sum=0;for(var i=0;i<fs.length;i++)sum+=pFS[fs[i]];pDS[domKey]=sum/3;}
+  // APA >=75%: reverse only answered items; prorate by their actual count.
+  function hasAnswer(id){return Number.isInteger(ansP[id])&&ansP[id]>=0&&ansP[id]<=3;}
+  function calcFacet(items){
+    var sum=0,answered=0;
+    for(var i=0;i<items.length;i++){
+      var id=items[i];
+      if(!hasAnswer(id))continue;
+      sum+=REV[id]?3-ansP[id]:ansP[id];answered++;
+    }
+    return answered<Math.ceil(items.length*0.75)?null:sum/answered;
+  }
+  function calcDomain(facets){
+    var sum=0;
+    for(var i=0;i<facets.length;i++){if(facets[i]===null)return null;sum+=facets[i];}
+    return sum/facets.length;
+  }
+  var pFS={};for(var f in FAC)pFS[f]=calcFacet(FAC[f]);
+  var pDS={};for(var domKey in DOM)pDS[domKey]=calcDomain(DOM[domKey].f.map(function(f){return pFS[f];}));
 
-  // PID-5 norms (Markon et al. 2024, Table A-12, N=995)
-  var PN={"\u0410\u043d\u0433\u0435\u0434\u043e\u043d\u0456\u044f":{m:0.838,sd:0.610},"\u0422\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c":{m:0.938,sd:0.726},"\u041f\u043e\u0448\u0443\u043a \u0443\u0432\u0430\u0433\u0438":{m:0.688,sd:0.627},"\u0411\u0435\u0437\u0441\u0435\u0440\u0434\u0435\u0447\u043d\u0456\u0441\u0442\u044c":{m:0.350,sd:0.425},"\u041e\u0431\u043c\u0430\u043d\u043d\u0456\u0441\u0442\u044c":{m:0.451,sd:0.491},"\u0414\u0435\u043f\u0440\u0435\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{m:0.444,sd:0.555},"\u0412\u0456\u0434\u0432\u043e\u043b\u0456\u043a\u0443\u0432\u0430\u043d\u0456\u0441\u0442\u044c":{m:0.754,sd:0.663},"\u0415\u043a\u0441\u0446\u0435\u043d\u0442\u0440\u0438\u0447\u043d\u0456\u0441\u0442\u044c":{m:0.675,sd:0.745},"\u0415\u043c\u043e\u0446\u0456\u0439\u043d\u0430 \u043b\u0430\u0431\u0456\u043b\u044c\u043d\u0456\u0441\u0442\u044c":{m:0.806,sd:0.697},"\u0413\u0440\u0430\u043d\u0434\u0456\u043e\u0437\u043d\u0456\u0441\u0442\u044c":{m:0.720,sd:0.564},"\u0412\u043e\u0440\u043e\u0436\u0456\u0441\u0442\u044c":{m:0.830,sd:0.636},"\u0406\u043c\u043f\u0443\u043b\u044c\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{m:0.675,sd:0.608},"\u0423\u043d\u0438\u043a\u0430\u043d\u043d\u044f \u0431\u043b\u0438\u0437\u044c\u043a\u043e\u0441\u0442\u0456":{m:0.531,sd:0.647},"\u0411\u0435\u0437\u0432\u0456\u0434\u043f\u043e\u0432\u0456\u0434\u0430\u043b\u044c\u043d\u0456\u0441\u0442\u044c":{m:0.330,sd:0.427},"\u041c\u0430\u043d\u0456\u043f\u0443\u043b\u044f\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{m:0.717,sd:0.635},"\u041f\u0435\u0440\u0446\u0435\u043f\u0442\u0438\u0432\u043d\u0430 \u0434\u0438\u0437\u0440\u0435\u0433\u0443\u043b\u044f\u0446\u0456\u044f":{m:0.351,sd:0.429},"\u041f\u0435\u0440\u0441\u0435\u0432\u0435\u0440\u0430\u0446\u0456\u044f":{m:0.715,sd:0.598},"\u041e\u0431\u043c\u0435\u0436\u0435\u043d\u0430 \u0430\u0444\u0435\u043a\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{m:0.973,sd:0.684},"\u0420\u0438\u0433\u0456\u0434\u043d\u0438\u0439 \u043f\u0435\u0440\u0444\u0435\u043a\u0446\u0456\u043e\u043d\u0456\u0437\u043c":{m:0.892,sd:0.577},"\u0421\u0445\u0438\u043b\u044c\u043d\u0456\u0441\u0442\u044c \u0434\u043e \u0440\u0438\u0437\u0438\u043a\u0443":{m:0.999,sd:0.513},"\u0421\u0435\u043f\u0430\u0440\u0430\u0446\u0456\u0439\u043d\u0430 \u0442\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c":{m:0.701,sd:0.633},"\u041f\u0456\u0434\u043a\u043e\u0440\u044e\u0432\u0430\u043d\u0456\u0441\u0442\u044c":{m:1.108,sd:0.684},"\u041f\u0456\u0434\u043e\u0437\u0440\u0456\u043b\u0456\u0441\u0442\u044c":{m:0.829,sd:0.588},"\u041d\u0435\u0437\u0432\u0438\u0447\u043d\u0456 \u043f\u0435\u0440\u0435\u043a\u043e\u043d\u0430\u043d\u043d\u044f":{m:0.491,sd:0.545},"\u0412\u0456\u0434\u0441\u0442\u043e\u0440\u043e\u043d\u0435\u043d\u0456\u0441\u0442\u044c":{m:0.946,sd:0.712}};
+  // Markon et al. 2024, N=995. A-12 RA/RP rows corrected against A-6
+  // and the book cases (audit 2026-10-15); see ampd-interpreter METHODOLOGY.md.
+  var PN={"\u0410\u043d\u0433\u0435\u0434\u043e\u043d\u0456\u044f":{m:0.838,sd:0.610},"\u0422\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c":{m:0.938,sd:0.726},"\u041f\u043e\u0448\u0443\u043a \u0443\u0432\u0430\u0433\u0438":{m:0.688,sd:0.627},"\u0411\u0435\u0437\u0441\u0435\u0440\u0434\u0435\u0447\u043d\u0456\u0441\u0442\u044c":{m:0.350,sd:0.425},"\u041e\u0431\u043c\u0430\u043d\u043d\u0456\u0441\u0442\u044c":{m:0.451,sd:0.491},"\u0414\u0435\u043f\u0440\u0435\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{m:0.444,sd:0.555},"\u0412\u0456\u0434\u0432\u043e\u043b\u0456\u043a\u0443\u0432\u0430\u043d\u0456\u0441\u0442\u044c":{m:0.754,sd:0.663},"\u0415\u043a\u0441\u0446\u0435\u043d\u0442\u0440\u0438\u0447\u043d\u0456\u0441\u0442\u044c":{m:0.675,sd:0.745},"\u0415\u043c\u043e\u0446\u0456\u0439\u043d\u0430 \u043b\u0430\u0431\u0456\u043b\u044c\u043d\u0456\u0441\u0442\u044c":{m:0.806,sd:0.697},"\u0413\u0440\u0430\u043d\u0434\u0456\u043e\u0437\u043d\u0456\u0441\u0442\u044c":{m:0.720,sd:0.564},"\u0412\u043e\u0440\u043e\u0436\u0456\u0441\u0442\u044c":{m:0.830,sd:0.636},"\u0406\u043c\u043f\u0443\u043b\u044c\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{m:0.675,sd:0.608},"\u0423\u043d\u0438\u043a\u0430\u043d\u043d\u044f \u0431\u043b\u0438\u0437\u044c\u043a\u043e\u0441\u0442\u0456":{m:0.531,sd:0.647},"\u0411\u0435\u0437\u0432\u0456\u0434\u043f\u043e\u0432\u0456\u0434\u0430\u043b\u044c\u043d\u0456\u0441\u0442\u044c":{m:0.330,sd:0.427},"\u041c\u0430\u043d\u0456\u043f\u0443\u043b\u044f\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{m:0.717,sd:0.635},"\u041f\u0435\u0440\u0446\u0435\u043f\u0442\u0438\u0432\u043d\u0430 \u0434\u0438\u0437\u0440\u0435\u0433\u0443\u043b\u044f\u0446\u0456\u044f":{m:0.351,sd:0.429},"\u041f\u0435\u0440\u0441\u0435\u0432\u0435\u0440\u0430\u0446\u0456\u044f":{m:0.715,sd:0.598},"\u041e\u0431\u043c\u0435\u0436\u0435\u043d\u0430 \u0430\u0444\u0435\u043a\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{m:0.892,sd:0.577},"\u0420\u0438\u0433\u0456\u0434\u043d\u0438\u0439 \u043f\u0435\u0440\u0444\u0435\u043a\u0446\u0456\u043e\u043d\u0456\u0437\u043c":{m:0.973,sd:0.684},"\u0421\u0445\u0438\u043b\u044c\u043d\u0456\u0441\u0442\u044c \u0434\u043e \u0440\u0438\u0437\u0438\u043a\u0443":{m:0.999,sd:0.513},"\u0421\u0435\u043f\u0430\u0440\u0430\u0446\u0456\u0439\u043d\u0430 \u0442\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c":{m:0.701,sd:0.633},"\u041f\u0456\u0434\u043a\u043e\u0440\u044e\u0432\u0430\u043d\u0456\u0441\u0442\u044c":{m:1.108,sd:0.684},"\u041f\u0456\u0434\u043e\u0437\u0440\u0456\u043b\u0456\u0441\u0442\u044c":{m:0.829,sd:0.588},"\u041d\u0435\u0437\u0432\u0438\u0447\u043d\u0456 \u043f\u0435\u0440\u0435\u043a\u043e\u043d\u0430\u043d\u043d\u044f":{m:0.491,sd:0.545},"\u0412\u0456\u0434\u0441\u0442\u043e\u0440\u043e\u043d\u0435\u043d\u0456\u0441\u0442\u044c":{m:0.946,sd:0.712}};
   var DN={"\u041d\u0435\u0433\u0430\u0442\u0438\u0432\u043d\u0430 \u0430\u0444\u0435\u043a\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":{m:0.815,sd:0.586},"\u0412\u0456\u0434\u0441\u0442\u043e\u0440\u043e\u043d\u0435\u043d\u0456\u0441\u0442\u044c":{m:0.772,sd:0.538},"\u0410\u043d\u0442\u0430\u0433\u043e\u043d\u0456\u0437\u043c":{m:0.629,sd:0.477},"\u0420\u043e\u0437\u0433\u0430\u043b\u044c\u043c\u043e\u0432\u0430\u043d\u0456\u0441\u0442\u044c":{m:0.586,sd:0.483},"\u041f\u0441\u0438\u0445\u043e\u0442\u0438\u0437\u043c":{m:0.506,sd:0.504}};
-  function tsc(raw,n){return Math.round(50+10*(raw-n.m)/n.sd);}
-  function tcl(t){return t>=75?"#c0392b":t>=70?"#e67e22":t>=65?"#f39c12":"#27ae60";}
-  function tlb(t){return t>=75?"\u0412\u0438\u0440\u0430\u0436\u0435\u043d\u0435":t>=70?"\u0417\u043d\u0430\u0447\u043d\u0435":t>=65?"\u041f\u043e\u0433\u0440\u0430\u043d\u0438\u0447\u043d\u043e":"\u041d\u043e\u0440\u043c\u0430";}
 
   // Validity scales (0-based item indices)
   var VRIN_PAIRS=[[78,173],[108,109],[101,121],[137,180],[37,91],[79,127],[49,126],[147,168],[88,144],[73,172],[190,210],[152,165],[124,179],[104,122],[131,143],[20,54],[23,24],[51,151],[69,70],[171,184]];
   var ORS_ITEMS=[169,7,177,1,165,39,38,170,43,149];
-  var PRD_ITEMS=[95,11,37,118,147,162,167,168,1,135,10,182,197,161,46,97,35,41,153,191,105];
+  // Markon 2024 Table 4-3: 22 items, 0-based; items 96/98 reversed.
+  var PRD_ITEMS=[1,10,35,37,41,46,95,97,105,118,121,135,147,153,161,162,167,168,182,191,197,198];
   var PRD_REV_SET={95:1,97:1};
-  var vrinScore=0;for(var vi=0;vi<VRIN_PAIRS.length;vi++){var vp=VRIN_PAIRS[vi];vrinScore+=Math.abs((ansP[vp[0]]||0)-(ansP[vp[1]]||0));}
-  var orsScore=0;for(var oi=0;oi<ORS_ITEMS.length;oi++){if((ansP[ORS_ITEMS[oi]]||0)===3)orsScore++;}
-  var prdScore=0;for(var pi=0;pi<PRD_ITEMS.length;pi++){var pv=ansP[PRD_ITEMS[pi]]||0;if(PRD_REV_SET[PRD_ITEMS[pi]])pv=3-pv;prdScore+=pv;}
+  // Validity cutoffs require the original complete scale, not imputed zeros.
+  var vrinScore=0;for(var vi=0;vi<VRIN_PAIRS.length;vi++){
+    var vp=VRIN_PAIRS[vi];
+    if(!hasAnswer(vp[0])||!hasAnswer(vp[1])){vrinScore=null;break;}
+    vrinScore+=Math.abs(ansP[vp[0]]-ansP[vp[1]]);
+  }
+  var orsScore=0;for(var oi=0;oi<ORS_ITEMS.length;oi++){
+    if(!hasAnswer(ORS_ITEMS[oi])){orsScore=null;break;}
+    if(ansP[ORS_ITEMS[oi]]===3)orsScore++;
+  }
+  var prdScore=0;for(var pi=0;pi<PRD_ITEMS.length;pi++){
+    var id=PRD_ITEMS[pi];if(!hasAnswer(id)){prdScore=null;break;}
+    prdScore+=PRD_REV_SET[id]?3-ansP[id]:ansP[id];
+  }
+  var fT={},dT={};
+  for(var f in FAC)fT[f]=tsc(pFS[f],PN[f]);
+  for(var d in DOM)dT[d]=tsc(pDS[d],DN[d]);
 
+  // Bach et al. (2020), https://doi.org/10.1159/000507589; 0-based PID-5 indices.
+  var BF_KEY=[
+    {name:"Негативна афективність",facets:{"Емоційна лабільність":[61,121],"Тривожність":[108,109],"Сепараційна тривожність":[49,63]}},
+    {name:"Відстороненість",facets:{"Відстороненість":[81,135],"Ангедонія":[22,188],"Уникання близькості":[88,107]}},
+    {name:"Антагонізм",facets:{"Маніпулятивність":[161,218],"Обманність":[125,217],"Грандіозність":[186,196]}},
+    {name:"Розгальмованість",facets:{"Безвідповідальність":[128,159],"Імпульсивність":[3,16],"Відволікуваність":[5,131]}},
+    {name:"Психотизм",facets:{"Незвичні переконання":[193,208],"Ексцентричність":[24,184],"Перцептивна дизрегуляція":[43,76]}},
+    {name:"Ананкастія / Ананкастия",facets:{Perfectionism:[122,175],Rigidity:[139,219],Orderliness:[33,114]}}
+  ];
+  var bfM={label:"Похідний розрахунок PID-5-BF+M / МКХ-11 з повної форми, Bach et al., 2020",range:"0–3",
+    keyVariant:"bach-2020",keyNote:"",domains:[]};
+  for(var bi=0;bi<BF_KEY.length;bi++){
+    var bd=BF_KEY[bi],bf=[],means=[];
+    for(var fn in bd.facets){var mean=calcFacet(bd.facets[fn]);bf.push({name:fn,items:bd.facets[fn],mean:mean});means.push(mean);}
+    bfM.domains.push({name:bd.name,mean:calcDomain(means),facets:bf});
+  }
+  var missingL=0,missingP=0;
+  for(var mi=1;mi<=80;mi++)if(!Number.isInteger(ansL[mi])||ansL[mi]<1||ansL[mi]>4)missingL++;
+  for(var mi=0;mi<220;mi++)if(!hasAnswer(mi))missingP++;
+  return {lSc:lSc,pFS:pFS,pDS:pDS,fT:fT,dT:dT,vrinScore:vrinScore,orsScore:orsScore,prdScore:prdScore,bfM:bfM,FAC:FAC,DOM:DOM,
+    passport:{form:"LPFS-SR-80 + PID-5-220",norms:"LPFS-SR: Morey (N=306); PID-5: Markon et al. 2024 (N=995)",scoringVersion:"2.2.0",missingRule:"LPFS: complete components and total; PID-5: APA >=75% per facet; unrounded mean of answered items",
+      normSample:{instrument:"PID-5-SRF",n:995,description:"US Census-matched"},respondentType:"self",
+      instruments:{lpfs:{form:"LPFS-SR-80",norms:"Morey author scoring form",normSample:{n:306,description:"Nonclinical respondents"},missingRule:"All items in a component required; total requires all 80; no prorating",missingCount:missingL},
+        pid5:{form:"PID-5-220",norms:"Markon et al. 2024, corrected RA/RP",normSample:{n:995,description:"US Census-matched"},missingRule:"APA >=75% per facet; unrounded mean of answered items",missingCount:missingP}},
+      missingCount:missingL+missingP,missingCountByInstrument:{lpfs:missingL,pid5:missingP}}};
+}
+// END AMPD SCORING CORE
+function calc(){
+  var scores=calculateAMPD(ansL,ansP);
+  var lSc=scores.lSc,pFS=scores.pFS,pDS=scores.pDS,FAC=scores.FAC,DOM=scores.DOM;
+  var vrinScore=scores.vrinScore,orsScore=scores.orsScore,prdScore=scores.prdScore;
   var LD={Identity:"\u0422\u0440\u0443\u0434\u043d\u043e\u0449\u0456 \u0437 \u0432\u0456\u0434\u0447\u0443\u0442\u0442\u044f\u043c \u0441\u0435\u0431\u0435 \u044f\u043a \u0446\u0456\u043b\u0456\u0441\u043d\u043e\u0457 \u043e\u0441\u043e\u0431\u0438\u0441\u0442\u043e\u0441\u0442\u0456. \u041c\u043e\u0436\u0435 \u043f\u0440\u043e\u044f\u0432\u043b\u044f\u0442\u0438\u0441\u044f \u043d\u0435\u0441\u0442\u0430\u0431\u0456\u043b\u044c\u043d\u043e\u044e \u0441\u0430\u043c\u043e\u043e\u0446\u0456\u043d\u043a\u043e\u044e, \u0440\u043e\u0437\u043c\u0438\u0442\u0438\u043c\u0438 \u043c\u0435\u0436\u0430\u043c\u0438 \u00ab\u042f\u00bb, \u0435\u043c\u043e\u0446\u0456\u0439\u043d\u043e\u044e \u043d\u0435\u0441\u0442\u0430\u0431\u0456\u043b\u044c\u043d\u0456\u0441\u0442\u044e.","Self-Direction":"\u041f\u0440\u043e\u0431\u043b\u0435\u043c\u0438 \u0437 \u043f\u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u043e\u044e \u0442\u0430 \u0434\u043e\u0441\u044f\u0433\u043d\u0435\u043d\u043d\u044f\u043c \u0446\u0456\u043b\u0435\u0439, \u043f\u043e\u0448\u0443\u043a\u043e\u043c \u0441\u0435\u043d\u0441\u0443 \u0436\u0438\u0442\u0442\u044f, \u0441\u0430\u043c\u043e\u0440\u0435\u0444\u043b\u0435\u043a\u0441\u0456\u0454\u044e. \u041c\u043e\u0436\u0435 \u043f\u0440\u043e\u044f\u0432\u043b\u044f\u0442\u0438\u0441\u044f \u0456\u043c\u043f\u0443\u043b\u044c\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044e, \u0432\u0456\u0434\u0447\u0443\u0442\u0442\u044f\u043c \u0431\u0435\u0437\u0446\u0456\u043b\u044c\u043d\u043e\u0441\u0442\u0456.",Empathy:"\u0422\u0440\u0443\u0434\u043d\u043e\u0449\u0456 \u0437 \u0440\u043e\u0437\u0443\u043c\u0456\u043d\u043d\u044f\u043c \u043f\u0435\u0440\u0435\u0436\u0438\u0432\u0430\u043d\u044c \u0442\u0430 \u0442\u043e\u0447\u043e\u043a \u0437\u043e\u0440\u0443 \u0456\u043d\u0448\u0438\u0445 \u043b\u044e\u0434\u0435\u0439. \u0415\u0433\u043e\u0446\u0435\u043d\u0442\u0440\u0438\u0447\u043d\u0430 \u043f\u0435\u0440\u0441\u043f\u0435\u043a\u0442\u0438\u0432\u0430, \u043d\u0435\u0447\u0443\u0442\u043b\u0438\u0432\u0456\u0441\u0442\u044c \u0434\u043e \u0432\u043f\u043b\u0438\u0432\u0443 \u0432\u043b\u0430\u0441\u043d\u0438\u0445 \u0434\u0456\u0439.",Intimacy:"\u041f\u0440\u043e\u0431\u043b\u0435\u043c\u0438 \u0437\u0456 \u0432\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043d\u044f\u043c \u0442\u0430 \u043f\u0456\u0434\u0442\u0440\u0438\u043c\u0430\u043d\u043d\u044f\u043c \u0431\u043b\u0438\u0437\u044c\u043a\u0438\u0445, \u0432\u0437\u0430\u0454\u043c\u043d\u0438\u0445 \u0441\u0442\u043e\u0441\u0443\u043d\u043a\u0456\u0432. \u0423\u043d\u0438\u043a\u0430\u043d\u043d\u044f \u0430\u0431\u043e \u0432\u0438\u043a\u043e\u0440\u0438\u0441\u0442\u0430\u043d\u043d\u044f \u0441\u0442\u043e\u0441\u0443\u043d\u043a\u0456\u0432.",Total:"\u0417\u0430\u0433\u0430\u043b\u044c\u043d\u0438\u0439 \u0440\u0456\u0432\u0435\u043d\u044c \u043f\u043e\u0440\u0443\u0448\u0435\u043d\u043d\u044f \u043e\u0441\u043e\u0431\u0438\u0441\u0442\u0456\u0441\u043d\u043e\u0433\u043e \u0444\u0443\u043d\u043a\u0446\u0456\u043e\u043d\u0443\u0432\u0430\u043d\u043d\u044f. \u0412\u0438\u0449\u0456 \u0431\u0430\u043b\u0438 \u2014 \u0433\u043b\u0438\u0431\u0448\u0456 \u043f\u0440\u043e\u0431\u043b\u0435\u043c\u0438 \u0443 \u0441\u0430\u043c\u043e\u0441\u043f\u0440\u0438\u0439\u043d\u044f\u0442\u0442\u0456 \u0442\u0430 \u0441\u0442\u043e\u0441\u0443\u043d\u043a\u0430\u0445."};
   var PD={"\u0410\u043d\u0433\u0435\u0434\u043e\u043d\u0456\u044f":"\u0412\u0456\u0434\u0441\u0443\u0442\u043d\u0456\u0441\u0442\u044c \u0437\u0430\u0434\u043e\u0432\u043e\u043b\u0435\u043d\u043d\u044f \u0432\u0456\u0434 \u0436\u0438\u0442\u0442\u044f, \u0437\u043d\u0438\u0436\u0435\u043d\u043d\u044f \u0456\u043d\u0442\u0435\u0440\u0435\u0441\u0443 \u0442\u0430 \u0435\u043d\u0435\u0440\u0433\u0456\u0457.","\u0422\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c":"\u0427\u0430\u0441\u0442\u0435 \u043f\u0435\u0440\u0435\u0436\u0438\u0432\u0430\u043d\u043d\u044f \u0442\u0440\u0438\u0432\u043e\u0433\u0438, \u043d\u0435\u0440\u0432\u043e\u0437\u043d\u043e\u0441\u0442\u0456, \u0445\u0432\u0438\u043b\u044e\u0432\u0430\u043d\u043d\u044f \u043f\u0440\u043e \u043c\u0438\u043d\u0443\u043b\u0435 \u0442\u0430 \u043c\u0430\u0439\u0431\u0443\u0442\u043d\u0454.","\u041f\u043e\u0448\u0443\u043a \u0443\u0432\u0430\u0433\u0438":"\u041f\u0440\u0430\u0433\u043d\u0435\u043d\u043d\u044f \u0431\u0443\u0442\u0438 \u0432 \u0446\u0435\u043d\u0442\u0440\u0456 \u0443\u0432\u0430\u0433\u0438, \u043f\u0440\u0438\u0432\u0435\u0440\u043d\u0435\u043d\u043d\u044f \u0437\u0430\u0445\u043e\u043f\u043b\u0435\u043d\u043d\u044f \u043e\u0442\u043e\u0447\u0443\u044e\u0447\u0438\u0445.","\u0411\u0435\u0437\u0441\u0435\u0440\u0434\u0435\u0447\u043d\u0456\u0441\u0442\u044c":"\u0412\u0456\u0434\u0441\u0443\u0442\u043d\u0456\u0441\u0442\u044c \u0442\u0443\u0440\u0431\u043e\u0442\u0438 \u043f\u0440\u043e \u043f\u043e\u0447\u0443\u0442\u0442\u044f \u0456\u043d\u0448\u0438\u0445, \u0431\u0440\u0430\u043a \u043a\u0430\u044f\u0442\u0442\u044f.","\u041e\u0431\u043c\u0430\u043d\u043d\u0456\u0441\u0442\u044c":"\u041d\u0435\u0447\u0435\u0441\u043d\u0456\u0441\u0442\u044c, \u0444\u0430\u043b\u044c\u0441\u0438\u0444\u0456\u043a\u0430\u0446\u0456\u044f, \u0432\u0438\u043a\u043e\u0440\u0438\u0441\u0442\u0430\u043d\u043d\u044f \u043e\u0431\u043c\u0430\u043d\u0443 \u0434\u043b\u044f \u0441\u0432\u043e\u0457\u0445 \u0446\u0456\u043b\u0435\u0439.","\u0414\u0435\u043f\u0440\u0435\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044c":"\u041f\u0440\u0438\u0433\u043d\u0456\u0447\u0435\u043d\u0456\u0441\u0442\u044c, \u0431\u0435\u0437\u043d\u0430\u0434\u0456\u044f, \u0432\u0456\u0434\u0447\u0443\u0442\u0442\u044f \u043d\u0435\u043f\u043e\u0432\u043d\u043e\u0446\u0456\u043d\u043d\u043e\u0441\u0442\u0456, \u043f\u0440\u043e\u0432\u0438\u043d\u0438.","\u0412\u0456\u0434\u0432\u043e\u043b\u0456\u043a\u0443\u0432\u0430\u043d\u0456\u0441\u0442\u044c":"\u0422\u0440\u0443\u0434\u043d\u043e\u0449\u0456 \u0437 \u043a\u043e\u043d\u0446\u0435\u043d\u0442\u0440\u0430\u0446\u0456\u0454\u044e, \u043b\u0435\u0433\u043a\u0430 \u0432\u0456\u0434\u0432\u043e\u043b\u0456\u043a\u0443\u0432\u0430\u043d\u0456\u0441\u0442\u044c.","\u0415\u043a\u0441\u0446\u0435\u043d\u0442\u0440\u0438\u0447\u043d\u0456\u0441\u0442\u044c":"\u041d\u0435\u0437\u0432\u0438\u0447\u043d\u0430 \u043f\u043e\u0432\u0435\u0434\u0456\u043d\u043a\u0430, \u0437\u043e\u0432\u043d\u0456\u0448\u043d\u0456\u0441\u0442\u044c \u0447\u0438 \u043c\u043e\u0432\u043b\u0435\u043d\u043d\u044f; \u0434\u0438\u0432\u043d\u0456 \u0434\u0443\u043c\u043a\u0438.","\u0415\u043c\u043e\u0446\u0456\u0439\u043d\u0430 \u043b\u0430\u0431\u0456\u043b\u044c\u043d\u0456\u0441\u0442\u044c":"\u041d\u0435\u0441\u0442\u0430\u0431\u0456\u043b\u044c\u043d\u0456\u0441\u0442\u044c \u0435\u043c\u043e\u0446\u0456\u0439, \u043d\u0435\u043f\u0440\u043e\u043f\u043e\u0440\u0446\u0456\u0439\u043d\u0456 \u0435\u043c\u043e\u0446\u0456\u0439\u043d\u0456 \u0440\u0435\u0430\u043a\u0446\u0456\u0457.","\u0413\u0440\u0430\u043d\u0434\u0456\u043e\u0437\u043d\u0456\u0441\u0442\u044c":"\u041f\u0435\u0440\u0435\u043a\u043e\u043d\u0430\u043d\u0456\u0441\u0442\u044c \u0443 \u0432\u043b\u0430\u0441\u043d\u0456\u0439 \u043f\u0435\u0440\u0435\u0432\u0430\u0437\u0456, \u043e\u0447\u0456\u043a\u0443\u0432\u0430\u043d\u043d\u044f \u043e\u0441\u043e\u0431\u043b\u0438\u0432\u043e\u0433\u043e \u0441\u0442\u0430\u0432\u043b\u0435\u043d\u043d\u044f.","\u0412\u043e\u0440\u043e\u0436\u0456\u0441\u0442\u044c":"\u0427\u0430\u0441\u0442\u0430 \u0437\u043b\u0456\u0441\u0442\u044c, \u0434\u0440\u0430\u0442\u0456\u0432\u043b\u0438\u0432\u0456\u0441\u0442\u044c, \u043c\u0441\u0442\u0438\u0432\u0430 \u043f\u043e\u0432\u0435\u0434\u0456\u043d\u043a\u0430.","\u0406\u043c\u043f\u0443\u043b\u044c\u0441\u0438\u0432\u043d\u0456\u0441\u0442\u044c":"\u0414\u0456\u0457 \u0437\u0430 \u043f\u043e\u0440\u0438\u0432\u043e\u043c \u0431\u0435\u0437 \u043e\u0431\u043c\u0456\u0440\u043a\u043e\u0432\u0443\u0432\u0430\u043d\u043d\u044f \u043d\u0430\u0441\u043b\u0456\u0434\u043a\u0456\u0432.","\u0423\u043d\u0438\u043a\u0430\u043d\u043d\u044f \u0431\u043b\u0438\u0437\u044c\u043a\u043e\u0441\u0442\u0456":"\u0423\u043d\u0438\u043a\u043d\u0435\u043d\u043d\u044f \u0440\u043e\u043c\u0430\u043d\u0442\u0438\u0447\u043d\u0438\u0445 \u0441\u0442\u043e\u0441\u0443\u043d\u043a\u0456\u0432 \u0442\u0430 \u0456\u043d\u0442\u0438\u043c\u043d\u043e\u0457 \u0431\u043b\u0438\u0437\u044c\u043a\u043e\u0441\u0442\u0456.","\u0411\u0435\u0437\u0432\u0456\u0434\u043f\u043e\u0432\u0456\u0434\u0430\u043b\u044c\u043d\u0456\u0441\u0442\u044c":"\u0406\u0433\u043d\u043e\u0440\u0443\u0432\u0430\u043d\u043d\u044f \u0437\u043e\u0431\u043e\u0432\u2019\u044f\u0437\u0430\u043d\u044c \u0442\u0430 \u043e\u0431\u0456\u0446\u044f\u043d\u043e\u043a.","\u041c\u0430\u043d\u0456\u043f\u0443\u043b\u044f\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":"\u0412\u0438\u043a\u043e\u0440\u0438\u0441\u0442\u0430\u043d\u043d\u044f \u0445\u0438\u0442\u0440\u043e\u0449\u0456\u0432 \u0434\u043b\u044f \u0432\u043f\u043b\u0438\u0432\u0443 \u043d\u0430 \u0456\u043d\u0448\u0438\u0445.","\u041f\u0435\u0440\u0446\u0435\u043f\u0442\u0438\u0432\u043d\u0430 \u0434\u0438\u0437\u0440\u0435\u0433\u0443\u043b\u044f\u0446\u0456\u044f":"\u0414\u0435\u043f\u0435\u0440\u0441\u043e\u043d\u0430\u043b\u0456\u0437\u0430\u0446\u0456\u044f, \u0434\u0435\u0440\u0435\u0430\u043b\u0456\u0437\u0430\u0446\u0456\u044f, \u0434\u0438\u0441\u043e\u0446\u0456\u0430\u0442\u0438\u0432\u043d\u0456 \u043f\u0435\u0440\u0435\u0436\u0438\u0432\u0430\u043d\u043d\u044f.","\u041f\u0435\u0440\u0441\u0435\u0432\u0435\u0440\u0430\u0446\u0456\u044f":"\u041d\u0430\u043f\u043e\u043b\u0435\u0433\u043b\u0438\u0432\u0435 \u043f\u043e\u0432\u0442\u043e\u0440\u0435\u043d\u043d\u044f \u043f\u043e\u0432\u0435\u0434\u0456\u043d\u043a\u0438, \u0437\u0430\u0446\u0438\u043a\u043b\u0435\u043d\u043d\u044f.","\u041e\u0431\u043c\u0435\u0436\u0435\u043d\u0430 \u0430\u0444\u0435\u043a\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c":"\u0417\u043c\u0435\u043d\u0448\u0435\u043d\u0430 \u0435\u043c\u043e\u0446\u0456\u0439\u043d\u0430 \u0440\u0435\u0430\u043a\u0442\u0438\u0432\u043d\u0456\u0441\u0442\u044c, \u0431\u0430\u0439\u0434\u0443\u0436\u0456\u0441\u0442\u044c.","\u0420\u0438\u0433\u0456\u0434\u043d\u0438\u0439 \u043f\u0435\u0440\u0444\u0435\u043a\u0446\u0456\u043e\u043d\u0456\u0437\u043c":"\u041d\u0430\u043f\u043e\u043b\u044f\u0433\u0430\u043d\u043d\u044f \u043d\u0430 \u0431\u0435\u0437\u0434\u043e\u0433\u0430\u043d\u043d\u043e\u0441\u0442\u0456, \u043d\u0435\u0437\u0434\u0430\u0442\u043d\u0456\u0441\u0442\u044c \u0434\u043e \u0433\u043d\u0443\u0447\u043a\u043e\u0441\u0442\u0456.","\u0421\u0445\u0438\u043b\u044c\u043d\u0456\u0441\u0442\u044c \u0434\u043e \u0440\u0438\u0437\u0438\u043a\u0443":"\u041d\u0435\u0431\u0435\u0437\u043f\u0435\u0447\u043d\u0456 \u0434\u0456\u0457 \u0431\u0435\u0437 \u0443\u0440\u0430\u0445\u0443\u0432\u0430\u043d\u043d\u044f \u043d\u0430\u0441\u043b\u0456\u0434\u043a\u0456\u0432.","\u0421\u0435\u043f\u0430\u0440\u0430\u0446\u0456\u0439\u043d\u0430 \u0442\u0440\u0438\u0432\u043e\u0436\u043d\u0456\u0441\u0442\u044c":"\u0421\u0442\u0440\u0430\u0445 \u0437\u0430\u043b\u0438\u0448\u0438\u0442\u0438\u0441\u044f \u043d\u0430 \u0441\u0430\u043c\u043e\u0442\u0456 \u0447\u0435\u0440\u0435\u0437 \u0432\u0456\u0434\u043a\u0438\u0434\u0430\u043d\u043d\u044f.","\u041f\u0456\u0434\u043a\u043e\u0440\u044e\u0432\u0430\u043d\u0456\u0441\u0442\u044c":"\u0410\u0434\u0430\u043f\u0442\u0430\u0446\u0456\u044f \u043f\u043e\u0432\u0435\u0434\u0456\u043d\u043a\u0438 \u0434\u043e \u0431\u0430\u0436\u0430\u043d\u044c \u0456\u043d\u0448\u0438\u0445 \u043d\u0430 \u0448\u043a\u043e\u0434\u0443 \u0441\u043e\u0431\u0456.","\u041f\u0456\u0434\u043e\u0437\u0440\u0456\u043b\u0456\u0441\u0442\u044c":"\u041e\u0447\u0456\u043a\u0443\u0432\u0430\u043d\u043d\u044f \u0437\u043b\u043e\u0433\u043e \u043d\u0430\u043c\u0456\u0440\u0443 \u0432\u0456\u0434 \u0456\u043d\u0448\u0438\u0445.","\u041d\u0435\u0437\u0432\u0438\u0447\u043d\u0456 \u043f\u0435\u0440\u0435\u043a\u043e\u043d\u0430\u043d\u043d\u044f":"\u0412\u0456\u0440\u0430 \u0443 \u043d\u0435\u0437\u0432\u0438\u0447\u043d\u0456 \u0437\u0434\u0456\u0431\u043d\u043e\u0441\u0442\u0456, \u0433\u0430\u043b\u044e\u0446\u0438\u043d\u0430\u0442\u043e\u0440\u043d\u0456 \u043f\u0435\u0440\u0435\u0436\u0438\u0432\u0430\u043d\u043d\u044f.","\u0412\u0456\u0434\u0441\u0442\u043e\u0440\u043e\u043d\u0435\u043d\u0456\u0441\u0442\u044c":"\u0423\u043d\u0438\u043a\u0430\u043d\u043d\u044f \u0441\u043e\u0446\u0456\u0430\u043b\u044c\u043d\u0438\u0445 \u043a\u043e\u043d\u0442\u0430\u043a\u0442\u0456\u0432, \u043f\u0435\u0440\u0435\u0432\u0430\u0433\u0430 \u0441\u0430\u043c\u043e\u0442\u043d\u043e\u0441\u0442\u0456."};
 
   var NM={Total:{m:232.4,s1:308.8,s15:347.1,s2:385.3},Identity:{m:75.8,s1:101.0,s15:113.6,s2:126.2},"Self-Direction":{m:53.4,s1:73.6,s15:83.7,s2:93.7},Empathy:{m:39.1,s1:53.3,s15:60.5,s2:67.6},Intimacy:{m:64.1,s1:87.1,s15:98.6,s2:110.1}};
   var RU={Identity:"\u0406\u0434\u0435\u043d\u0442\u0438\u0447\u043d\u0456\u0441\u0442\u044c","Self-Direction":"\u0421\u0430\u043c\u043e\u0441\u043f\u0440\u044f\u043c\u043e\u0432\u0430\u043d\u0456\u0441\u0442\u044c",Empathy:"\u0415\u043c\u043f\u0430\u0442\u0456\u044f",Intimacy:"\u0411\u043b\u0438\u0437\u044c\u043a\u0456\u0441\u0442\u044c",Total:"\u0417\u0430\u0433\u0430\u043b\u044c\u043d\u0438\u0439 \u0431\u0430\u043b"};
 
-  function sv(sc,nm){if(sc>=nm.s2)return{l:"\u0412\u0438\u0440\u0430\u0436\u0435\u043d\u0456 \u043f\u043e\u0440\u0443\u0448\u0435\u043d\u043d\u044f (\u2265+2.0 SD)",c:"#c0392b"};if(sc>=nm.s15)return{l:"\u041a\u043b\u0456\u043d\u0456\u0447\u043d\u043e \u0437\u043d\u0430\u0447\u0443\u0449\u0456 (+1.5\u20132.0 SD)",c:"#e67e22"};if(sc>=nm.s1)return{l:"\u0421\u0443\u0431\u043a\u043b\u0456\u043d\u0456\u0447\u043d\u0456 (+1.0\u20131.5 SD)",c:"#f39c12"};return{l:"\u0412 \u043c\u0435\u0436\u0430\u0445 \u043d\u043e\u0440\u043c\u0438",c:"#27ae60"};}
-  function pc(s){return s>=2?"#c0392b":s>=1.5?"#e67e22":s>=1?"#f39c12":"#27ae60";}
+  function sv(sc,nm){if(sc===null)return{l:"NA — недостатньо відповідей",c:"#7f8c8d"};if(sc>=nm.s2)return{l:"\u0412\u0438\u0440\u0430\u0436\u0435\u043d\u0456 \u043f\u043e\u0440\u0443\u0448\u0435\u043d\u043d\u044f (\u2265+2.0 SD)",c:"#c0392b"};if(sc>=nm.s15)return{l:"\u041a\u043b\u0456\u043d\u0456\u0447\u043d\u043e \u0437\u043d\u0430\u0447\u0443\u0449\u0456 (+1.5\u20132.0 SD)",c:"#e67e22"};if(sc>=nm.s1)return{l:"\u0421\u0443\u0431\u043a\u043b\u0456\u043d\u0456\u0447\u043d\u0456 (+1.0\u20131.5 SD)",c:"#f39c12"};return{l:"\u0412 \u043c\u0435\u0436\u0430\u0445 \u043d\u043e\u0440\u043c\u0438",c:"#27ae60"};}
 
   var pid=document.getElementById("pid").value;
-  var dateNow=new Date();var ds=("0"+dateNow.getDate()).slice(-2)+"."+("0"+(dateNow.getMonth()+1)).slice(-2)+"."+dateNow.getFullYear();
+  var dateNow=new Date(resultIdentity().ts);var ds=("0"+dateNow.getDate()).slice(-2)+"."+("0"+(dateNow.getMonth()+1)).slice(-2)+"."+dateNow.getFullYear();
   var lMx=0;var ks=["Total","Identity","Self-Direction","Empathy","Intimacy"];for(var i=0;i<ks.length;i++){var v=Math.max(lSc[ks[i]],NM[ks[i]].s2);if(v>lMx)lMx=v;}
 
   var h='<div class="res-hdr"><h2>AMPD \u2014 \u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u0438</h2><p>Alternative Model for Personality Disorders (DSM-5)</p>';
   if(pid)h+='<p style="margin-top:6px"><b>'+esc(pid)+'</b></p>';
   h+='<p style="color:#999;font-size:12px">'+ds+'</p></div>';
   // Validity warnings (only shown if problems detected)
-  var valProb=vrinScore>=17||orsScore>=3||prdScore<11;
+  var validityMissing=vrinScore===null||orsScore===null||prdScore===null;
+  var valProb=vrinScore>=15||orsScore>=3||(prdScore!==null&&prdScore<11)||validityMissing;
+  h+='<div class="interp"><b>Валідність:</b> VRIN='+scoreText(vrinScore)+' | ORS='+scoreText(orsScore)+' | PRD='+scoreText(prdScore)+'</div>';
+  h+='<p style="font-size:11px;color:#666">'+esc(passportText(scores.passport))+'</p>';
+  h+='<p style="font-size:11px;color:#666">NA — недостатньо відповідей. PID-5: ≥75% відповідей у фасеті; усі три фасети для домену. Шкали валідності: усі їхні пункти.</p>';
   if(valProb){
     h+='<div style="margin:8px 0;padding:10px;border-radius:8px;border:2px solid '+(vrinScore>=17?'#c0392b':'#e67e22')+';background:'+(vrinScore>=17?'#fdedec':'#fef5e7')+';font-size:12px">';
     h+='<b>\u26a0 \u0412\u0430\u043b\u0456\u0434\u043d\u0456\u0441\u0442\u044c \u043f\u0440\u043e\u0444\u0456\u043b\u044e:</b><br>';
     if(vrinScore>=17)h+='<span style="color:#c0392b">\u25cf VRIN='+vrinScore+' (\u226517) \u2014 \u043d\u0435\u043a\u043e\u043d\u0441\u0438\u0441\u0442\u0435\u043d\u0442\u043d\u0456 \u0432\u0456\u0434\u043f\u043e\u0432\u0456\u0434\u0456, \u043f\u0440\u043e\u0444\u0456\u043b\u044c \u043d\u0435\u0432\u0430\u043b\u0456\u0434\u043d\u0438\u0439</span><br>';
     else if(vrinScore>=15)h+='<span style="color:#e67e22">\u25cf VRIN='+vrinScore+' (15\u201317) \u2014 \u0441\u0456\u0440\u0430 \u0437\u043e\u043d\u0430, \u0456\u043d\u0442\u0435\u0440\u043f\u0440\u0435\u0442\u0443\u0432\u0430\u0442\u0438 \u0437 \u043e\u0431\u0435\u0440\u0435\u0436\u043d\u0456\u0441\u0442\u044e</span><br>';
     if(orsScore>=3)h+='<span style="color:#e67e22">\u25cf ORS='+orsScore+' (\u22653) \u2014 \u043f\u0456\u0434\u043e\u0437\u0440\u0430 \u043d\u0430 \u0430\u0433\u0433\u0440\u0430\u0432\u0430\u0446\u0456\u044e</span><br>';
-    if(prdScore<11)h+='<span style="color:#f39c12">\u25cf PRD='+prdScore+' (<11) \u2014 \u043c\u043e\u0436\u043b\u0438\u0432\u0435 \u0437\u0430\u043d\u0438\u0436\u0435\u043d\u043d\u044f \u043f\u0440\u043e\u0431\u043b\u0435\u043c</span><br>';
+    if((prdScore!==null&&prdScore<11))h+='<span style="color:#f39c12">\u25cf PRD='+prdScore+' (<11) \u2014 \u043c\u043e\u0436\u043b\u0438\u0432\u0435 \u0437\u0430\u043d\u0438\u0436\u0435\u043d\u043d\u044f \u043f\u0440\u043e\u0431\u043b\u0435\u043c</span><br>';
+    if(validityMissing)h+='<span>NA: шкали валідності з пропущеними пунктами не інтерпретуються.</span>';
     h+='</div>';
   }
+  h+='<p style="font-size:11px">PRD: &lt;11 — привід уточнити стиль відповідей у клінічному контексті; 11–20 — невизначений результат; &gt;20 — підтримує автентичність, але не доводить її. Пороги розроблено на стаціонарних пацієнтах; низький PRD поширений і в неклінічній вибірці. LPFS: NA означає неповний компонент; клінічний критерій A оцінює лікар.</p>';
   h+='<div class="section-title" style="border-color:#2c3e50">\u041a\u0440\u0438\u0442\u0435\u0440\u0456\u0439 A: \u0420\u0456\u0432\u0435\u043d\u044c \u0444\u0443\u043d\u043a\u0446\u0456\u043e\u043d\u0443\u0432\u0430\u043d\u043d\u044f (LPFS-SR)</div>';
-  for(var i=0;i<ks.length;i++){var k=ks[i];var nm=NM[k];var sc=lSc[k];var s=sv(sc,nm);var pct=Math.max(sc/lMx*100,2);var s1p=nm.s1/lMx*100;
-    h+='<div class="sc"><div class="sc-top"><span class="sc-lbl'+(k==="Total"?" tot":"")+'">'+RU[k]+'</span><span class="sc-val" style="color:'+s.c+'">'+sc.toFixed(1)+'</span></div>';
+  for(var i=0;i<ks.length;i++){var k=ks[i];var nm=NM[k];var sc=lSc[k];var s=sv(sc,nm);var pct=sc===null?0:Math.max(sc/lMx*100,2);var s1p=nm.s1/lMx*100;
+    h+='<div class="sc"><div class="sc-top"><span class="sc-lbl'+(k==="Total"?" tot":"")+'">'+RU[k]+'</span><span class="sc-val" style="color:'+s.c+'">'+(sc===null?'NA':sc.toFixed(1))+'</span></div>';
     h+='<div class="sc-bar"><div class="sc-mark" style="left:'+s1p+'%"></div><div class="sc-fill" style="width:'+pct+'%;background:linear-gradient(90deg,'+s.c+'aa,'+s.c+')"></div></div>';
     h+='<div class="sc-info"><span class="sc-norms">M:'+nm.m+' | +1SD:'+nm.s1+'</span><span class="sc-sev" style="color:'+s.c+'">'+s.l+'</span></div>';
     if(sc>=nm.s1)h+='<div class="desc">'+LD[k]+'</div>';h+='</div>';}
   h+='<div class="section-title" style="border-color:#8e44ad">\u041a\u0440\u0438\u0442\u0435\u0440\u0456\u0439 B: \u041f\u0430\u0442\u043e\u043b\u043e\u0433\u0456\u0447\u043d\u0456 \u0440\u0438\u0441\u0438 (PID-5)</div>';
   for(var domKey in DOM){var di=DOM[domKey];
-    var dT=DN[domKey]?tsc(pDS[domKey],DN[domKey]):50;var dCl=tcl(dT);
-    h+='<div class="dom"><div class="dom-title" style="background:'+di.bg+';color:'+di.c+'">'+domKey+' <span style="float:right;font-size:12px;color:'+dCl+'">T='+dT+'</span></div>';
-    for(var fi=0;fi<di.f.length;fi++){var fn=di.f[fi];var sc2=pFS[fn];var fT=PN[fn]?tsc(sc2,PN[fn]):50;var cl=tcl(fT);var pct2=Math.min(Math.max((fT-30)/60*100,2),100);
-      h+='<div class="fac"><span class="fac-lbl"><b>'+fn+'</b></span><span class="fac-bar-wrap"><span class="fac-bar" style="width:'+pct2+'%;background:'+cl+'"></span></span><span class="fac-val" style="color:'+cl+'">T='+fT+'</span></div>';
+    var dT=scores.dT[domKey];var dCl=tcl(dT);
+    h+='<div class="dom"><div class="dom-title" style="background:'+di.bg+';color:'+di.c+'">'+domKey+' <span style="float:right;font-size:12px;color:'+dCl+'">T='+scoreText(dT)+'</span></div>';
+    for(var fi=0;fi<di.f.length;fi++){var fn=di.f[fi];var sc2=pFS[fn];var fT=scores.fT[fn];var cl=tcl(fT);var pct2=fT===null?0:Math.min(Math.max((fT-30)/60*100,2),100);
+      h+='<div class="fac"><span class="fac-lbl"><b>'+fn+'</b></span><span class="fac-bar-wrap"><span class="fac-bar" style="width:'+pct2+'%;background:'+cl+'"></span></span><span class="fac-val" style="color:'+cl+'">T='+scoreText(fT)+'</span></div>';
       if(fT>=65&&PD[fn])h+='<div class="desc">'+PD[fn]+' <span style="color:#999">('+sc2.toFixed(2)+'/3)</span></div>';}
-    h+='<div class="dom-avg" style="background:'+di.bg+'"><span>\u0414\u043e\u043c\u0435\u043d: T='+dT+'</span><span style="color:'+dCl+'">'+tlb(dT)+' ('+pDS[domKey].toFixed(2)+'/3)</span></div></div>';}
+    h+='<div class="dom-avg" style="background:'+di.bg+'"><span>\u0414\u043e\u043c\u0435\u043d: T='+scoreText(dT)+'</span><span style="color:'+dCl+'">'+tlb(dT)+' ('+meanText(pDS[domKey])+')</span></div></div>';}
   var cn={};for(var domKey in DOM)for(var i=0;i<DOM[domKey].f.length;i++)cn[DOM[domKey].f[i]]=1;
   h+='<div class="dom"><div class="dom-title" style="background:#f0efe8;color:#666">\u0414\u043e\u0434\u0430\u0442\u043a\u043e\u0432\u0456 \u0444\u0430\u0441\u0435\u0442\u0438</div>';
-  for(var f in FAC){if(!cn[f]){var sc2=pFS[f];var fT=PN[f]?tsc(sc2,PN[f]):50;var cl=tcl(fT);var pct2=Math.min(Math.max((fT-30)/60*100,2),100);
-    h+='<div class="fac"><span class="fac-lbl">'+f+'</span><span class="fac-bar-wrap"><span class="fac-bar" style="width:'+pct2+'%;background:'+cl+'"></span></span><span class="fac-val" style="color:'+cl+'">T='+fT+'</span></div>';
+  for(var f in FAC){if(!cn[f]){var sc2=pFS[f];var fT=scores.fT[f];var cl=tcl(fT);var pct2=fT===null?0:Math.min(Math.max((fT-30)/60*100,2),100);
+    h+='<div class="fac"><span class="fac-lbl">'+f+'</span><span class="fac-bar-wrap"><span class="fac-bar" style="width:'+pct2+'%;background:'+cl+'"></span></span><span class="fac-val" style="color:'+cl+'">T='+scoreText(fT)+'</span></div>';
     if(fT>=65&&PD[f])h+='<div class="desc">'+PD[f]+' <span style="color:#999">('+sc2.toFixed(2)+'/3)</span></div>';}}
   h+='</div>';
   h+='<div class="interp"><b>\u0406\u043d\u0442\u0435\u0440\u043f\u0440\u0435\u0442\u0430\u0446\u0456\u044f:</b><br><b>\u041a\u0440\u0438\u0442\u0435\u0440\u0456\u0439 A (LPFS-SR):</b> \u2265+1.0 SD \u0441\u0443\u0431\u043a\u043b\u0456\u043d\u0456\u0447\u043d\u0456; \u2265+1.5 SD \u043a\u043b\u0456\u043d\u0456\u0447\u043d\u043e \u0437\u043d\u0430\u0447\u0443\u0449\u0456; \u2265+2.0 SD \u0432\u0438\u0440\u0430\u0436\u0435\u043d\u0456.<br><b>\u041a\u0440\u0438\u0442\u0435\u0440\u0456\u0439 B (PID-5, T-\u0431\u0430\u043b\u0438):</b> T<65 \u043d\u043e\u0440\u043c\u0430; 65\u201369 \u043f\u043e\u0433\u0440\u0430\u043d\u0438\u0447\u043d\u043e; 70\u201374 \u0437\u043d\u0430\u0447\u043d\u0435; \u226575 \u0432\u0438\u0440\u0430\u0436\u0435\u043d\u0435.<br><span style="color:#aaa;font-size:10px">T-\u0431\u0430\u043b\u0438 \u0437\u0430 Markon, Fossati, Somma, Krueger (2024). LPFS-SR \u00a9 2016 Morey. PID-5 \u00a9 2013 APA. \u041d\u0435 \u0437\u0430\u043c\u0456\u043d\u044e\u0454 \u043a\u043b\u0456\u043d\u0456\u0447\u043d\u043e\u0433\u043e \u0441\u0443\u0434\u0436\u0435\u043d\u043d\u044f.</span></div>';
-  __report={name:pid,date:ds,vrin:vrinScore,ors:orsScore,prd:prdScore,validityWarn:"",lpfs:[],domains:[],extraElevated:[]};
-  var vw=[];if(vrinScore>=17)vw.push("VRIN\u226517 \u043d\u0435\u0432\u0430\u043b\u0456\u0434\u043d\u0438\u0439");else if(vrinScore>=15)vw.push("VRIN \u0441\u0456\u0440\u0430 \u0437\u043e\u043d\u0430");if(orsScore>=3)vw.push("ORS\u22653 (\u0430\u0433\u0440\u0430\u0432\u0430\u0446\u0456\u044f)");if(prdScore<11)vw.push("PRD<11 (\u0437\u0430\u043d\u0438\u0436\u0435\u043d\u043d\u044f)");
+  __report={name:pid,date:ds,vrin:vrinScore,ors:orsScore,prd:prdScore,validityWarn:"",lpfs:[],domains:[],extraElevated:[],extraFacets:[],passport:scores.passport,bfM:scores.bfM,lSc:lSc,pFS:pFS,pDS:pDS,fT:scores.fT,dT:scores.dT,valProb:valProb};
+  var vw=[];if(vrinScore>=17)vw.push("VRIN\u226517 \u043d\u0435\u0432\u0430\u043b\u0456\u0434\u043d\u0438\u0439");else if(vrinScore>=15)vw.push("VRIN \u0441\u0456\u0440\u0430 \u0437\u043e\u043d\u0430");if(orsScore>=3)vw.push("ORS≥3: можливе надлишкове репортування; реальна психопатологія не виключена");if((prdScore!==null&&prdScore<11))vw.push("PRD<11: потребує контекстного уточнення; не доказ дисимуляції");
+  if(prdScore!==null&&prdScore>=11&&prdScore<=20)vw.push("PRD 11–20: невизначений результат");
+  if(validityMissing)vw.push("NA: неповні шкали валідності");
   __report.validityWarn=vw.join("; ");
   for(var __i=0;__i<ks.length;__i++){var __k=ks[__i];__report.lpfs.push({name:RU[__k],score:lSc[__k],sev:sv(lSc[__k],NM[__k]).l});}
-  for(var __dk in DOM){var __dT=DN[__dk]?tsc(pDS[__dk],DN[__dk]):50;var __d={name:__dk,T:__dT,label:tlb(__dT),facets:[]};for(var __fi=0;__fi<DOM[__dk].f.length;__fi++){var __fn=DOM[__dk].f[__fi];var __fT=PN[__fn]?tsc(pFS[__fn],PN[__fn]):50;__d.facets.push({name:__fn,T:__fT});}__report.domains.push(__d);}
+  for(var __dk in DOM){var __dT=scores.dT[__dk];var __d={name:__dk,T:__dT,mean:pDS[__dk],label:tlb(__dT),facets:[]};for(var __fi=0;__fi<DOM[__dk].f.length;__fi++){var __fn=DOM[__dk].f[__fi];var __fT=scores.fT[__fn];__d.facets.push({name:__fn,T:__fT,mean:pFS[__fn]});}__report.domains.push(__d);}
   var __cn2={};for(var __dk in DOM)for(var __fi=0;__fi<DOM[__dk].f.length;__fi++)__cn2[DOM[__dk].f[__fi]]=1;
-  for(var __fn in FAC){if(!__cn2[__fn]){var __fT=PN[__fn]?tsc(pFS[__fn],PN[__fn]):50;if(__fT>=65)__report.extraElevated.push({name:__fn,T:__fT});}}
-  h+='<div class="btns"><button class="btn-rst" id="btnRst">\u0417\u043d\u043e\u0432\u0443</button> <button class="btn-prt" id="btnPrt">PDF</button> <button class="btn-cpy" id="btnCpy">\u041a\u043e\u043f\u0456\u044e\u0432\u0430\u0442\u0438 \u0437\u0432\u0456\u0442</button> <button class="btn-lnk" id="btnLnk">\u041f\u043e\u0441\u0438\u043b\u0430\u043d\u043d\u044f</button>'+(AMPD_BOT_ENDPOINT?' <button class="btn-bot" id="btnBot">'+esc(UI[curLang].sendBot)+'</button>':'')+'</div>';
+  for(var __fn in FAC){if(!__cn2[__fn]){var __fT=scores.fT[__fn];__report.extraFacets.push({name:__fn,T:__fT,mean:pFS[__fn]});if(__fT>=65)__report.extraElevated.push({name:__fn,T:__fT,mean:pFS[__fn]});}}
+  h+='<div class="section-title" style="border-color:#526477">'+esc(scores.bfM.label)+'</div>';
+  h+='<p style="font-size:11px">Середні 0–3; 18 субфасет × 2 пункти. Для субфасети потрібні обидві відповіді, для домену — усі три субфасети. Психотизм — домен DSM-5 у шестидоменному профілі BF+M.</p>';
+  if(scores.bfM.keyNote)h+='<p style="font-size:11px">'+esc(scores.bfM.keyNote)+'</p>';
+  for(var bi=0;bi<scores.bfM.domains.length;bi++){
+    var bd=scores.bfM.domains[bi];
+    h+='<div class="dom"'+(bi===5?' style="border:2px solid #526477"':'')+'><div class="dom-title" style="background:#eef2f5;color:#34495e">'+esc(bd.name)+' <span style="float:right">'+meanText(bd.mean)+'</span></div>';
+    for(var bj=0;bj<bd.facets.length;bj++){var bf=bd.facets[bj];h+='<div class="fac"><span class="fac-lbl">'+esc(bf.name)+'</span><span>'+meanText(bf.mean)+'</span></div>';}
+    h+='</div>';
+  }
+  h+='<div class="btns"><button class="btn-rst" id="btnRst">\u0417\u043d\u043e\u0432\u0443</button> <button class="btn-prt" id="btnPrt">PDF</button> <button class="btn-cpy" id="btnJson">JSON</button> <button class="btn-cpy" id="btnCpy">\u041a\u043e\u043f\u0456\u044e\u0432\u0430\u0442\u0438 \u0437\u0432\u0456\u0442</button> <button class="btn-lnk" id="btnLnk">\u041f\u043e\u0441\u0438\u043b\u0430\u043d\u043d\u044f</button>'+(AMPD_BOT_ENDPOINT?' <button class="btn-bot" id="btnBot">'+esc(UI[curLang].sendBot)+'</button>':'')+'</div>';
   if(!window.__viewMode){_wipeAmpdStorage();_draftStartedAt=null;}
   document.getElementById("form").style.display="none";var re=document.getElementById("res");re.innerHTML=h;re.className="res show";window.scrollTo(0,0);
   // Safety hard-modal: суицидальные/самоповреждающие items в PID-5
-  // (0-based id 80, 100, 118, 177). Триггер ≥ 2 («часто/завжди»).
+  // (0-based id 80, 118, 177). Триггер ≥ 2 («часто/завжди»).
   // См. UX-баррьер CSS .safety-modal-overlay. DevTools-обход возможен —
   // server-side recompute планируется next-sprint.
-  var _safeIds=[80,100,118,177];
+  var _safeIds=[80,118,177];
   var _safeHit=false;
-  for(var _si=0;_si<_safeIds.length;_si++){if((ansP[_safeIds[_si]]||0)>=2){_safeHit=true;break;}}
+  for(var _si=0;_si<_safeIds.length;_si++){if(Number.isInteger(ansP[_safeIds[_si]])&&ansP[_safeIds[_si]]>=2&&ansP[_safeIds[_si]]<=3){_safeHit=true;break;}}
   if(_safeHit)showSafetyModal();
   var bR=document.getElementById("btnRst");if(bR)bR.addEventListener("click",function(){_wipeAmpdStorage();_draftStartedAt=null;location.hash="";location.reload();},false);
   var bP=document.getElementById("btnPrt");if(bP)bP.addEventListener("click",function(){window.print();},false);
+  var bJ=document.getElementById("btnJson");if(bJ)bJ.addEventListener("click",exportJSON,false);
   var bC=document.getElementById("btnCpy");if(bC)bC.addEventListener("click",copyReport,false);
   var bL=document.getElementById("btnLnk");if(bL)bL.addEventListener("click",copyLink,false);
   var bB=document.getElementById("btnBot");if(bB)bB.addEventListener("click",sendToBot,false);
@@ -1294,7 +1428,7 @@ document.getElementById("safetyModalAck").addEventListener("click",hideSafetyMod
   if(h.indexOf("#r=")===0){
     var d=unpackResult(h.substring(3));
     if(d){
-      ansL=d.ansL;ansP=d.ansP;
+      ansL=d.ansL;ansP=d.ansP;resultIdentity(d.ts);
       if(d.lang)curLang=d.lang;
       var pi=document.getElementById("pid");if(pi&&d.name)pi.value=d.name;
       var bu=document.getElementById("langUk"),br=document.getElementById("langRu");
@@ -1304,6 +1438,12 @@ document.getElementById("safetyModalAck").addEventListener("click",hideSafetyMod
       calc();
       return;
     }
+    // Do not fall back to a different saved protocol after a damaged result link.
+    renderPage();upd();
+    var error=document.createElement("p");error.id="importError";error.setAttribute("role","alert");
+    error.textContent="Посилання пошкоджене або містить недопустимі відповіді. Результат не завантажено.";
+    document.getElementById("form").prepend(error);
+    return;
   }
   load();renderPage();upd();
 })();
