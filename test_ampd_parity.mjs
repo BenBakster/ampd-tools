@@ -187,3 +187,65 @@ const lpfsMissing=answers(80,1,1);delete lpfsMissing[4];
 const partialLpfs=check('LPFS missing Identity item',answers(220,1),lpfsMissing);
 assert.equal(partialLpfs.scores.lSc.Identity,null);assert.equal(partialLpfs.scores.lSc.Total,null);
 assert.equal(partialLpfs.scores.lSc.Empathy,25);
+
+// Telegram handoff: no auto-redirect; explicit link panel, copy, TTL expiry.
+for (const name of ['showTgBox']) assert.equal(extract(source[0], name), extract(source[1], name), `${name} differs`);
+for (const [i, s] of source.entries()) {
+  for (const key of ['tgReady','openTg','copyTgLink','tgLinkCopied','tgHint','tgExpired']) {
+    assert.equal(s.split(key + ':').length - 1, 2, `${files[i]}: ${key} must exist in uk and ru`);
+  }
+  assert.ok(s.includes('.tg-box{') && s.includes('.tg-open{'), `${files[i]}: tg-box CSS missing`);
+  assert.doesNotMatch(s, /location\.href\s*=\s*dl/, `${files[i]}: auto-redirect is back`);
+}
+async function runSend(s, deepLink) {
+  const nodes = {}, toasts = [], copied = [], timers = [];
+  const mk = tag => {
+    let own = '';
+    const n = { tag, children: [], className: '', disabled: false, listeners: {},
+      appendChild(c) { this.children.push(c); c.parentNode = this; if (c.id) nodes[c.id] = c; return c; },
+      addEventListener(t, f) { this.listeners[t] = f; }, scrollIntoView() {} };
+    Object.defineProperty(n, 'textContent', {
+      get() { return own + n.children.map(c => c.textContent).join(''); },
+      set(v) { own = v; n.children = []; } });
+    return n;
+  };
+  const row = mk('div'), btn = mk('button'); btn.id = 'btnBot'; row.appendChild(btn);
+  const loc = { href: 'https://example.test/ampd/' };
+  const lb = { sending: 's', errPrefix: 'E:', endpointMissing: 'm', encodeErr: 'e', tgReady: 'READY', openTg: 'OPEN',
+    copyTgLink: 'COPY', tgLinkCopied: 'COPIED', tgHint: 'HINT', tgExpired: 'EXPIRED' };
+  const c = vm.createContext({
+    document: { getElementById: id => nodes[id] || null, createElement: mk },
+    window: { location: loc }, location: loc, UI: { uk: lb }, curLang: 'uk', AMPD_BOT_ENDPOINT: 'https://bot.test/ampd/submit',
+    packResult: () => 'QUJD', sanitizeName: x => x, buildCompactReport: () => 'r', buildTextReport: () => 'r', buildHtmlReport: () => '',
+    showToast: m => toasts.push(m), copyText: (t, ok) => { copied.push(t); ok(); },
+    setTimeout: (f, ms) => (timers.push({ f, ms }), timers.length), clearTimeout() {},
+    fetch: async () => ({ ok: true, json: async () => ({ token: 'abc', deep_link: deepLink }) }),
+  });
+  vm.runInContext(s.match(/^var AMPD_DEEP_LINK_RE=.*$/m)[0] + '\n' + s.match(/^var AMPD_LINK_TTL_MS=.*$/m)[0] + '\n' +
+    extract(s, 'showTgBox') + '\n' + extract(s, 'sendToBot'), c);
+  c.sendToBot();
+  for (let k = 0; k < 10; k++) await new Promise(r => setImmediate(r));
+  return { nodes, btn, row, loc, toasts, copied, timers };
+}
+for (const [i, s] of source.entries()) {
+  const dl = 'https://t.me/vilenchyk_bot?start=ampd_abc';
+  const ok = await runSend(s, dl);
+  assert.equal(ok.loc.href, 'https://example.test/ampd/', `${files[i]}: page must not navigate away`);
+  const box = ok.nodes.tgBox;
+  assert.ok(box && box.parentNode === ok.row && box.className === 'tg-box', `${files[i]}: tg box not shown inside .btns`);
+  const act = box.children.find(n => n.className === 'tg-act');
+  const a = act.children.find(n => n.tag === 'a');
+  assert.equal(a.href, dl); assert.equal(a.target, '_blank'); assert.equal(a.rel, 'noopener');
+  assert.ok(box.textContent.includes('READY') && box.textContent.includes('HINT'));
+  assert.equal(ok.btn.disabled, true, `${files[i]}: resend must be blocked while link is live`);
+  act.children.find(n => n.tag === 'button').listeners.click();
+  assert.deepEqual(ok.copied, [dl]); assert.ok(ok.toasts.includes('COPIED'));
+  assert.equal(ok.timers.length, 1); assert.equal(ok.timers[0].ms, 59 * 60 * 1000);
+  ok.timers[0].f();
+  assert.equal(box.className, 'tg-box expired'); assert.equal(box.textContent, 'EXPIRED');
+  assert.equal(ok.btn.disabled, false, `${files[i]}: resend must be possible after expiry`);
+  const bad = await runSend(s, 'javascript:alert(1)');
+  assert.equal(bad.nodes.tgBox, undefined); assert.equal(bad.btn.disabled, false);
+  assert.ok(bad.toasts.includes('E:bad_deep_link')); assert.equal(bad.loc.href, 'https://example.test/ampd/');
+}
+console.log('PASS: Telegram handoff panel (no redirect, copy link, 59-min expiry, bad deep_link rejected)');

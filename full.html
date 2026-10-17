@@ -83,6 +83,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 .btn-cpy.ok,.btn-lnk.ok{background:#27ae60;color:#fff;border-color:#27ae60}
 .btn-bot{background:#2aabee;color:#fff;border-color:#2aabee}
 .btn-bot.ok{background:#27ae60;color:#fff;border-color:#27ae60}
+.tg-box{flex-basis:100%;max-width:520px;margin:4px auto 0;padding:12px 14px;border:2px solid #2aabee;border-radius:8px;background:#eef8fe;color:#222;text-align:center;font-size:14px;line-height:1.5}
+.tg-box p{margin:0 0 10px}
+.tg-box .tg-hint{margin:10px 0 0;font-size:12px;color:#555}
+.tg-box.expired{border-color:#c0392b;background:#fdedec}
+.tg-box.expired p{margin:0}
+.tg-act a,.tg-act button{margin:4px}
+.tg-open{display:inline-block;padding:12px 20px;font-size:15px;font-weight:700;border-radius:8px;border:2px solid #2aabee;background:#2aabee;color:#fff;text-decoration:none}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,.2)}
 .toast.show{opacity:1}
 @media print{.prog,.btns,.lang-toggle,.toast{display:none!important}body{background:#fff;padding:0}}
@@ -795,7 +802,7 @@ var UI={
     skip:"\u2193 \u041f\u0440\u043e\u043f\u0443\u0449\u0435\u043d\u0456",result:"\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442",clear:"\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u0438 \u043f\u0440\u043e\u0433\u0440\u0435\u0441",
     lOpts:["\u0417\u043e\u0432\u0441\u0456\u043c \u043d\u0435 \u0432\u0456\u0440\u043d\u043e","\u0422\u0440\u043e\u0445\u0438 \u0432\u0456\u0440\u043d\u043e","\u041f\u0435\u0440\u0435\u0432\u0430\u0436\u043d\u043e \u0432\u0456\u0440\u043d\u043e","\u0426\u0456\u043b\u043a\u043e\u043c \u0432\u0456\u0440\u043d\u043e"],
     pOpts:["Зовсім ні","Скоріше ні","Скоріше так","Повністю так"],
-    sendBot:"Надіслати лікарю",sending:"Відправляю…",openingTg:"Відкриваю Telegram…",
+    sendBot:"Надіслати лікарю",sending:"Відправляю…",tgReady:"Майже готово: результат ще не в лікаря. Відкрийте Telegram і, якщо з’явиться кнопка «Start» / «Почати», натисніть її.",openTg:"Відкрити в Telegram",copyTgLink:"Скопіювати посилання",tgLinkCopied:"Посилання скопійовано",tgHint:"Посилання діє 1 годину. Якщо Telegram у вас на телефоні — скопіюйте посилання й відкрийте його там.",tgExpired:"Посилання застаріло. Натисніть «Надіслати лікарю» ще раз.",
     endpointMissing:"Endpoint не налаштовано",encodeErr:"Помилка кодування",errPrefix:"Помилка: "
   },
   ru:{
@@ -813,7 +820,7 @@ var UI={
     skip:"\u2193 \u041f\u0440\u043e\u043f\u0443\u0449\u0435\u043d\u043d\u044b\u0435",result:"\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442",clear:"\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u043f\u0440\u043e\u0433\u0440\u0435\u0441\u0441",
     lOpts:["\u0421\u043e\u0432\u0441\u0435\u043c \u043d\u0435 \u0432\u0435\u0440\u043d\u043e","\u0421\u043b\u0435\u0433\u043a\u0430 \u0432\u0435\u0440\u043d\u043e","\u0412 \u043e\u0441\u043d\u043e\u0432\u043d\u043e\u043c \u0432\u0435\u0440\u043d\u043e","\u041f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e \u0432\u0435\u0440\u043d\u043e"],
     pOpts:["Точно нет","Скорее нет","Скорее да","Точно да"],
-    sendBot:"Отправить врачу",sending:"Отправляю…",openingTg:"Открываю Telegram…",
+    sendBot:"Отправить врачу",sending:"Отправляю…",tgReady:"Почти готово: результат ещё не у врача. Откройте Telegram и, если появится кнопка «Start» / «Запустить», нажмите её.",openTg:"Открыть в Telegram",copyTgLink:"Скопировать ссылку",tgLinkCopied:"Ссылка скопирована",tgHint:"Ссылка действует 1 час. Если Telegram у вас на телефоне — скопируйте ссылку и откройте её там.",tgExpired:"Ссылка устарела. Нажмите «Отправить врачу» ещё раз.",
     endpointMissing:"Endpoint не настроен",encodeErr:"Ошибка кодирования",errPrefix:"Ошибка: "
   }
 };
@@ -1113,6 +1120,34 @@ function sanitizeName(raw){
   return s||null;
 }
 
+// Deep-link не открываем автоматически: на десктопе без Telegram переход
+// уводил со страницы результатов, пациент не жал Start, и токен прокисал
+// на сервере (AMPD_PENDING_TTL_SEC=1ч). Показываем явную кнопку + копирование
+// ссылки (открыть на телефоне); за минуту до TTL блок помечается устаревшим
+// и «Надіслати лікарю» снова доступна. Блок живёт внутри .btns — поэтому
+// не попадает ни в печать, ни в buildHtmlReport.
+var AMPD_LINK_TTL_MS=59*60*1000;
+function showTgBox(dl,lb,btn){
+  var row=btn&&btn.parentNode;if(!row)return;
+  var box=document.getElementById("tgBox");
+  if(!box){box=document.createElement("div");box.id="tgBox";row.appendChild(box);}
+  box.className="tg-box";box.textContent="";
+  var p=document.createElement("p");p.textContent=lb.tgReady;box.appendChild(p);
+  var act=document.createElement("div");act.className="tg-act";
+  var a=document.createElement("a");a.className="tg-open";a.href=dl;a.target="_blank";a.rel="noopener";a.textContent=lb.openTg;act.appendChild(a);
+  var cp=document.createElement("button");cp.type="button";cp.className="btn-lnk";cp.textContent=lb.copyTgLink;
+  cp.addEventListener("click",function(){copyText(dl,function(){showToast(lb.tgLinkCopied);});},false);
+  act.appendChild(cp);box.appendChild(act);
+  var hint=document.createElement("p");hint.className="tg-hint";hint.textContent=lb.tgHint;box.appendChild(hint);
+  clearTimeout(showTgBox._t);
+  showTgBox._t=setTimeout(function(){
+    box.className="tg-box expired";box.textContent="";
+    var x=document.createElement("p");x.textContent=lb.tgExpired;box.appendChild(x);
+    btn.disabled=false;
+  },AMPD_LINK_TTL_MS);
+  if(box.scrollIntoView)box.scrollIntoView(false);
+}
+
 function sendToBot(){
   var lb=UI[curLang];
   if(!AMPD_BOT_ENDPOINT){showToast(lb.endpointMissing);return;}
@@ -1130,9 +1165,7 @@ function sendToBot(){
     .then(function(d){
       var dl=String((d&&d.deep_link)||"");
       if(!AMPD_DEEP_LINK_RE.test(dl))throw new Error("bad_deep_link");
-      showToast(lb.openingTg);
-      if(btn){btn.className="btn-bot ok";}
-      window.location.href=dl;
+      showTgBox(dl,lb,btn);
     })
     .catch(function(e){
       showToast(lb.errPrefix+(e.message||"connection"));
